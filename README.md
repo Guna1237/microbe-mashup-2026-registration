@@ -61,7 +61,7 @@ If the old form has submissions or assigned IDs, export it before cutting over. 
 
 ## Deploy using the Hostinger domain
 
-Use the [Hostinger VPS runbook](deploy/HOSTINGER.md) and the included Caddy and systemd files for a repeatable install, health check, backup and restore.
+Use the [Hostinger VPS runbook](deploy/HOSTINGER.md) for Caddy and systemd, or the [managed Node.js runbook](deploy/HOSTINGER-MANAGED.md) for GitHub import with cron.
 
 1. Use a Node.js 24 host with a persistent writable disk and one always-running app instance. A Hostinger VPS can host the app with HTTPS through a reverse proxy, or you can run it elsewhere and use Hostinger only for the domain. On another host, add a subdomain such as `register.yourdomain.com` in the host's dashboard and add its requested DNS record at Hostinger. Keep existing mail records. This server needs filesystem storage and a background worker.
 2. For the public app, configure `DEMO=0`, `RAZORPAY_TEST=0`, `PUBLIC_URL=https://register.yourdomain.com`, and an absolute `DATA_DIR` on the persistent disk. Use one app process per database. Terminate TLS at the proxy. Set `TRUST_LOOPBACK_PROXY=1` only when that proxy sets its own forwarding headers, as the supplied Caddy configuration does. Keep the database on private storage with backups.

@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
+import { execFile, execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, mkdirSync, copyFileSync, readFileSync, rmSync } from 'node:fs';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
+import { promisify } from 'node:util';
 
 const origin = 'https://register.example.test';
 const node = process.execPath;
@@ -183,6 +184,38 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     for (const stop of cleanup) await stop();
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
     assert.ok(basename(root).startsWith('mashup-production-'));
+    rmSync(root, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 });
+  }
+});
+
+test('cron mode sends queued demo email once across overlapping processes', { timeout: 30000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mashup-cron-'));
+  let stop;
+  try {
+    const env = {
+      ...process.env, DEMO: '1', RAZORPAY_TEST: '0', PAYMENT_MODE: 'manual',
+      JOB_MODE: 'cron', DEMO_DATA_DIR: root, STAFF_FILE: '', ADMIN_PASSWORD: '',
+      MAIL_PAUSED: '0', WHATSAPP_URL: '',
+    };
+    const base = await boot(env, (fn) => { stop = fn; });
+    const reply = await fetch(base + '/api/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ ...attendee, email: 'cron-test@example.test' }),
+    });
+    assert.equal(reply.status, 200);
+    const outbox = join(root, 'outbox.jsonl');
+    assert.ok(!existsSync(outbox));
+    const runWorker = () => promisify(execFile)(node, ['server.mjs', 'jobs:drain'], { env });
+    await Promise.all([runWorker(), runWorker(), runWorker()]);
+    const messages = readFileSync(outbox, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].to, 'cron-test@example.test');
+    assert.match(messages[0].subject, /registration received/i);
+  } finally {
+    if (stop) await stop();
+    assert.equal(dirname(resolve(root)), resolve(tmpdir()));
+    assert.ok(basename(root).startsWith('mashup-cron-'));
     rmSync(root, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 });
   }
 });

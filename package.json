@@ -12,6 +12,7 @@
     "preflight": "node --env-file-if-exists=.env server.mjs preflight",
     "backup": "node --env-file-if-exists=.env server.mjs backup",
     "verify-backup": "node ops.mjs",
+    "jobs:drain": "node --env-file-if-exists=.env server.mjs jobs:drain",
     "test": "node --test",
     "export": "node --env-file-if-exists=.env server.mjs export",
     "import-paid": "node --env-file-if-exists=.env server.mjs import-paid"

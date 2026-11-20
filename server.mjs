@@ -28,6 +28,9 @@ const publicUrl = local ? 'http://127.0.0.1:' + port : (env.PUBLIC_URL || '').re
 const exporting = process.argv[2] === 'export';
 const backup = process.argv[2] === 'backup';
 const preflight = process.argv[2] === 'preflight';
+const oneShotJobs = process.argv[2] === 'jobs:drain';
+const jobMode = env.JOB_MODE || 'inline';
+if (!['inline', 'cron'].includes(jobMode)) throw new Error('Use JOB_MODE=inline or JOB_MODE=cron.');
 const mailPaused = env.MAIL_PAUSED === '1';
 const trustProxy = env.TRUST_LOOPBACK_PROXY === '1';
 const checkingRazorpay = process.argv[2] === 'check-razorpay';
@@ -70,7 +73,9 @@ if (whatsapp && !/^https:\/\/chat\.whatsapp\.com\/[\w-]+$/.test(whatsapp)) {
 const dir = resolve(demo ? env.DEMO_DATA_DIR || 'demo-data' : razorpayTest ? 'razorpay-test-data' : env.DATA_DIR || 'data');
 if (preflight && local) throw new Error('Set DEMO=0 and RAZORPAY_TEST=0 to run the production preflight.');
 const dbPath = join(dir, 'mashup.sqlite');
-if ((backup || exporting) && !existsSync(dbPath)) throw new Error('The event database was not found at the configured location.');
+if ((backup || exporting || oneShotJobs) && !existsSync(dbPath)) {
+  throw new Error('The event database was not found at the configured location.');
+}
 mkdirSync(dir, { recursive: true, mode: 0o750 });
 const db = new DatabaseSync(dbPath);
 db.exec(`
@@ -94,6 +99,9 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS manual_receipts (
     ref TEXT PRIMARY KEY REFERENCES orders(ref), utr TEXT NOT NULL UNIQUE,
     submitted_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS job_leases (
+    name TEXT PRIMARY KEY, worker TEXT NOT NULL, expires INTEGER NOT NULL
   );
 `);
 installAdminSchema(db);
@@ -345,12 +353,21 @@ let stopping = false;
 async function work() {
   if (working || stopping) return;
   working = true;
+  const worker = secret();
+  let leased = false;
+  const started = Date.now();
+  const deadline = started + 50000;
   try {
+    const claim = run(`INSERT INTO job_leases(name,worker,expires) VALUES('outbox',?,?)
+      ON CONFLICT(name) DO UPDATE SET worker=excluded.worker, expires=excluded.expires
+      WHERE job_leases.expires<=?`, worker, started + 90000, started);
+    if (!claim.changes) return;
+    leased = true;
     if (!demo && !manual) {
       const pending = all(`SELECT * FROM orders WHERE state='pending' AND link_id IS NOT NULL
         AND last_checked < ? ORDER BY last_checked LIMIT 60`, Date.now() - 45000);
       for (let i = 0; i < pending.length; i += 5) {
-        if (stopping) return;
+        if (stopping || Date.now() >= deadline) return;
         await Promise.allSettled(pending.slice(i, i + 5).map(refresh));
       }
     }
@@ -358,14 +375,23 @@ async function work() {
     const messages = all(`SELECT * FROM mail WHERE sent IS NULL AND next_attempt <= ?
       ORDER BY rowid LIMIT 90`, Date.now());
     for (const msg of messages) {
-      if (stopping) return;
+      if (stopping || Date.now() >= deadline) return;
       try { await deliver(msg); }
       catch {
         run('UPDATE mail SET error=? WHERE id=?', 'Email service request failed', msg.id);
         console.error('Email attempt failed for ' + msg.id);
       }
     }
-  } finally { working = false; }
+  } finally {
+    try { if (leased) run("DELETE FROM job_leases WHERE name='outbox' AND worker=?", worker); }
+    finally { working = false; }
+  }
+}
+
+if (oneShotJobs) {
+  try { await work(); }
+  finally { db.close(); }
+  process.exit(0);
 }
 
 function json(res, status, body) {
@@ -627,8 +653,10 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
 }).listen(port, '127.0.0.1', () => {
   console.log((demo ? 'Demo ready: ' : razorpayTest ? 'Razorpay Test Mode ready: ' : 'Registration ready: ') + publicUrl);
 });
-const poller = setInterval(() => work().catch(() => console.error('Background processing failed.')), 15000);
-poller.unref();
+const poller = jobMode === 'inline'
+  ? setInterval(() => work().catch(() => console.error('Background processing failed.')), 15000)
+  : null;
+poller?.unref();
 
 function shutdown() {
   if (stopping) return;
