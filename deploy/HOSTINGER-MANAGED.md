@@ -22,6 +22,8 @@ Use the Other preset, Node.js 24.x, root `./`, entry file `server.mjs` and no bu
 
 On Linux, the app can also read `$HOME/microbe-mashup-data/runtime.env`. Keep it owned by the hosting account with mode `600`. If the same variable is set in hPanel, hPanel’s value takes precedence. Remove duplicate placeholder entries when switching to the private file.
 
+If Hostinger supplies its own `PUBLIC_URL`, use `MASHUP_PUBLIC_URL` to set the working HTTPS origin explicitly, for example `https://www.microbemashup.org`. Keep this origin consistent for the web process, cron and attendee links.
+
 If the sending domain is still being verified, set `LAUNCH_HOLD=1`. The site loads with registration and workshop booking closed, and outgoing email is paused. Once Resend is verified and scheduled jobs are tested, set `LAUNCH_HOLD=0` and `MAIL_PAUSED=0`, then restart the app.
 
 ## Schedule payment and email jobs

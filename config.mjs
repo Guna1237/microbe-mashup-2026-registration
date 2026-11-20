@@ -2,9 +2,11 @@ import { existsSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { loadEnvFile } from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 const specified = process.env.MASHUP_ENV_FILE;
-const file = specified || join(homedir(), 'microbe-mashup-data', 'runtime.env');
+const managedHome = /^(\/home\/[^/]+)\/domains\//.exec(fileURLToPath(import.meta.url))?.[1];
+const file = specified || join(managedHome || homedir(), 'microbe-mashup-data', 'runtime.env');
 
 if (specified || (process.platform === 'linux' && process.env.DEMO !== '1' && existsSync(file))) {
   if (!isAbsolute(file)) throw new Error('MASHUP_ENV_FILE must use an absolute path.');

@@ -78,7 +78,7 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     }
     const env = {
       ...process.env, DEMO: '0', RAZORPAY_TEST: '0', MAIL_PAUSED: '1', TRUST_LOOPBACK_PROXY: '1',
-      LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '',
+      LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '', MASHUP_PUBLIC_URL: '',
       PRICES_CONFIRMED: 'true', STAFF_FILE: staffFile, PUBLIC_URL: origin, DATA_DIR: join(root, 'live'),
       BASIC_FEE: '800', IPC_FEE: '2500', ANTIBIOTIC_FEE: '2200', BEYOND_FEE: '4999',
       PAYMENT_MODE: 'manual', MANUAL_UPI_ID: 'test@example', MANUAL_PAYEE: 'QA only', MANUAL_QR_FILE: '',
@@ -111,9 +111,10 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     await frontDesk('admin/export', 403);
 
     const config = join(root, 'runtime.env');
-    writeFileSync(config, 'LAUNCH_HOLD=1\n', { mode: 0o600 });
-    const { LAUNCH_HOLD, ...holdConfig } = env;
-    const hold = await boot({ ...holdConfig, MASHUP_ENV_FILE: config, RESEND_API_KEY: '', MAIL_FROM: '',
+    writeFileSync(config, 'LAUNCH_HOLD=1\nMASHUP_PUBLIC_URL=' + origin + '\n', { mode: 0o600 });
+    const { LAUNCH_HOLD, MASHUP_PUBLIC_URL, ...holdConfig } = env;
+    const hold = await boot({ ...holdConfig, PUBLIC_URL: 'https://host-injected.example.test',
+      MASHUP_ENV_FILE: config, RESEND_API_KEY: '', MAIL_FROM: '',
       DATA_DIR: join(root, 'launch-hold') }, (fn) => cleanup.push(fn));
     const holding = api(hold);
     const { data: heldCatalog } = await holding('catalog', 200);

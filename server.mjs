@@ -25,7 +25,7 @@ const qr = manual && !demo && env.MANUAL_QR_FILE ? readFileSync(env.MANUAL_QR_FI
 if (qr && qr.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') throw new Error('MANUAL_QR_FILE must be a PNG image.');
 const port = Number(env.PORT || 8107);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be between 1 and 65535.');
-const publicUrl = local ? 'http://127.0.0.1:' + port : (env.PUBLIC_URL || '').replace(/\/$/, '');
+const publicUrl = local ? 'http://127.0.0.1:' + port : (env.MASHUP_PUBLIC_URL || env.PUBLIC_URL || '').replace(/\/$/, '');
 const exporting = process.argv[2] === 'export';
 const backup = process.argv[2] === 'backup';
 const preflight = process.argv[2] === 'preflight';
