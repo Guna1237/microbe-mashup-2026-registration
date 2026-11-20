@@ -1,0 +1,20 @@
+.env
+.env.*
+!.env.example
+data/
+demo-data/
+razorpay-test-data/
+*.sqlite*
+.impeccable/
+*.db
+*.db-*
+*.bak
+*.backup
+*.pem
+*.key
+staff*.json
+*roster*.json
+*.jsonl
+# Original uploads are retained locally. The website serves optimized WebP assets.
+/public/event-logo.png
+/public/college-logo.png

@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Organizer dashboard · Microbe Mashup ’26</title>
+  <link rel="stylesheet" href="/site.css">
+  <link rel="stylesheet" href="/admin.css">
+  <script type="module" src="/admin.js"></script>
+</head>
+<body class="admin-body">
+  <header class="mast">
+    <div class="wrap mast-inner">
+      <a class="wordmark" href="/admin"><img class="mark" src="/college-logo.webp" alt="" width="144" height="174">Microbe Mashup ’26</a>
+      <a class="mast-contact" href="/">Attendee site</a>
+    </div>
+  </header>
+  <main class="wrap admin-main">
+    <section id="login-panel" class="admin-card login-panel" hidden>
+      <p class="admin-kicker">Organizer access</p>
+      <h1>Sign in</h1>
+      <form id="login-form">
+        <label class="field">Staff username
+          <input name="user" type="text" autocomplete="username" maxlength="40" required>
+        </label>
+        <label class="field">Organizer passphrase
+          <input id="passphrase" name="password" type="password" autocomplete="current-password" maxlength="256" required>
+        </label>
+        <button type="submit">Sign in</button>
+      </form>
+      <p id="login-message" role="alert" hidden></p>
+    </section>
+    <section id="dashboard" hidden>
+      <header class="admin-heading">
+        <div><p class="admin-kicker" id="staff-identity">Microbe Mashup ’26</p><h1>Organizer dashboard</h1></div>
+        <div class="admin-tools">
+          <a class="button secondary" href="/api/admin/export" id="export-roster">Export roster</a>
+          <button id="logout" type="button" class="secondary">Sign out</button>
+        </div>
+      </header>
+      <p id="admin-preview" class="demo" hidden>Local preview · Test records and email only</p>
+      <p id="mail-paused" class="demo" hidden>Outgoing email is paused on this host.</p>
+      <p id="admin-message" class="admin-status" role="status" hidden></p>
+      <div id="metrics" class="metrics" aria-label="Event totals"></div>
+      <section id="registration-controls" class="admin-card controls-card" aria-labelledby="controls-heading">
+        <div><h2 id="controls-heading">Accept new registrations</h2><p>Pausing keeps existing payment links active.</p></div>
+        <div id="controls" class="control-list"></div>
+      </section>
+      <nav class="admin-nav" aria-label="Organizer dashboard views">
+        <button type="button" class="secondary" data-tab="orders">Orders &amp; check-in</button>
+        <button type="button" class="secondary" data-tab="mail">Email queue</button>
+        <button type="button" class="secondary" data-tab="audit">Activity log</button>
+      </nav>
+      <section id="orders" class="admin-card admin-view" aria-labelledby="orders-heading">
+        <header class="view-heading"><div><h2 id="orders-heading">Orders &amp; check-in</h2><p>Review UPI payments and check in verified attendees.</p></div></header>
+        <form class="filters" id="order-filters">
+          <label class="field" id="view-filter">View <select name="view">
+            <option value="review">Needs payment review</option>
+            <option value="unpaid">Awaiting payment</option>
+            <option value="paid">Paid orders</option>
+            <option value="check-in">Summit check-in</option>
+            <option value="all">All orders</option>
+          </select></label>
+          <label class="field">Find an attendee or order
+            <input name="q" type="search" maxlength="100" placeholder="Name, email, attendee ID, or UTR">
+          </label>
+          <button class="secondary" type="submit">Search</button>
+        </form>
+        <div id="order-list" class="order-list" aria-live="polite"></div>
+        <div class="pager">
+          <button class="secondary" type="button" id="prev">Previous</button>
+          <span id="page"></span>
+          <button class="secondary" type="button" id="next">Next</button>
+        </div>
+      </section>
+      <section id="mail" class="admin-card admin-view" aria-labelledby="mail-heading" hidden>
+        <header class="view-heading"><div><h2 id="mail-heading">Email queue</h2><p>Monitor pending sends and retry recent failures.</p></div><button type="button" class="secondary" data-refresh>Refresh</button></header>
+        <div id="mail-list" class="order-list"></div>
+      </section>
+      <section id="audit" class="admin-card admin-view" aria-labelledby="audit-heading" hidden>
+        <header class="view-heading"><div><h2 id="audit-heading">Activity log</h2><p>The latest payment reviews, check-ins and changes to registration.</p></div><button type="button" class="secondary" data-refresh>Refresh</button></header>
+        <div id="audit-list" class="order-list"></div>
+      </section>
+    </section>
+    <p id="loading" role="status">Loading organizer dashboard…</p>
+  </main>
+  <dialog id="review-dialog" aria-labelledby="review-heading">
+    <form id="review-form">
+      <h2 id="review-heading"></h2>
+      <p id="review-help"></p>
+      <div id="review-fields"></div>
+      <p id="review-error" role="alert" hidden></p>
+      <div class="actions"><button id="review-submit" type="submit"></button><button type="button" id="review-close" class="secondary">Cancel</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

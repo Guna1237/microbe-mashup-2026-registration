@@ -1,0 +1,19 @@
+{
+  "name": "microbe-mashup-registration",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "check-razorpay": "node --env-file-if-exists=.env server.mjs check-razorpay",
+    "verify-payment": "node --env-file-if-exists=.env server.mjs verify-payment",
+    "staff:create": "node staff.mjs create",
+    "staff:remove": "node staff.mjs remove",
+    "preflight": "node --env-file-if-exists=.env server.mjs preflight",
+    "backup": "node --env-file-if-exists=.env server.mjs backup",
+    "verify-backup": "node ops.mjs",
+    "test": "node --test",
+    "export": "node --env-file-if-exists=.env server.mjs export",
+    "import-paid": "node --env-file-if-exists=.env server.mjs import-paid"
+  }
+}

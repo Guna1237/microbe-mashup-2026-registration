@@ -1,0 +1,26 @@
+[Unit]
+Description=Microbe Mashup registration
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=microbe-mashup
+Group=microbe-mashup
+WorkingDirectory=/opt/microbe-mashup
+EnvironmentFile=/etc/microbe-mashup/mashup.env
+ExecStartPre=/usr/bin/node /opt/microbe-mashup/server.mjs preflight
+ExecStart=/usr/bin/node /opt/microbe-mashup/server.mjs
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=30s
+UMask=0077
+StateDirectory=microbe-mashup
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
