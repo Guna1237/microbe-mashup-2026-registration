@@ -1,3 +1,4 @@
+import './config.mjs';
 import { createServer } from 'node:http';
 import { mkdirSync, readFileSync, appendFileSync, existsSync } from 'node:fs';
 import { resolve, join, isAbsolute } from 'node:path';
@@ -31,7 +32,8 @@ const preflight = process.argv[2] === 'preflight';
 const oneShotJobs = process.argv[2] === 'jobs:drain';
 const jobMode = env.JOB_MODE || 'inline';
 if (!['inline', 'cron'].includes(jobMode)) throw new Error('Use JOB_MODE=inline or JOB_MODE=cron.');
-const mailPaused = env.MAIL_PAUSED === '1';
+const launchHold = env.LAUNCH_HOLD === '1';
+const mailPaused = launchHold || env.MAIL_PAUSED === '1';
 const trustProxy = env.TRUST_LOOPBACK_PROXY === '1';
 const checkingRazorpay = process.argv[2] === 'check-razorpay';
 const expectedKeyPrefix = razorpayTest ? 'rzp_test_' : 'rzp_live_';
@@ -56,8 +58,9 @@ const configuredUrl = URL.canParse(publicUrl) && new URL(publicUrl);
 const productionUrl = configuredUrl && configuredUrl.protocol === 'https:' && configuredUrl.origin === publicUrl;
 const persistentPath = Boolean(env.DATA_DIR && isAbsolute(env.DATA_DIR));
 const ready = demo || (razorpayTest && hasRazorpayKeys) || (env.PRICES_CONFIRMED === 'true' &&
-  ['BASIC_FEE', 'IPC_FEE', 'ANTIBIOTIC_FEE', 'BEYOND_FEE', 'RESEND_API_KEY', 'MAIL_FROM']
-    .every((key) => env[key]) && productionUrl && persistentPath && paymentConfigured && staff.length);
+  ['BASIC_FEE', 'IPC_FEE', 'ANTIBIOTIC_FEE', 'BEYOND_FEE'].every((key) => env[key]) &&
+  (launchHold || (env.RESEND_API_KEY && env.MAIL_FROM)) &&
+  productionUrl && persistentPath && paymentConfigured && staff.length);
 if (!ready && !exporting && !backup) {
   throw new Error('Configure the HTTPS domain, absolute data path, named staff accounts, payment and email, then confirm fees.');
 }
@@ -120,7 +123,7 @@ if (backup) {
 const get = (sql, ...args) => db.prepare(sql).get(...args);
 const all = (sql, ...args) => db.prepare(sql).all(...args);
 const run = (sql, ...args) => db.prepare(sql).run(...args);
-const isOpen = (name) => get('SELECT is_open FROM event_controls WHERE name=?', name)?.is_open !== 0;
+const isOpen = (name) => !launchHold && get('SELECT is_open FROM event_controls WHERE name=?', name)?.is_open !== 0;
 function audit(action, target, detail = '', actor = 'host-cli') {
   run('INSERT INTO organizer_audit(action,target,detail,created_at,actor) VALUES(?,?,?,?,?)',
     action, target, detail, Date.now(), actor);
@@ -569,7 +572,7 @@ function allowRegistration(req) {
 }
 
 const admin = createAdmin({ db, atomic, manual, accounts: staff, demo, clientIp, publicUrl, local, json, read, uid,
-  orderLabel, verifyManual, audit, sendCorrection, mailPaused });
+  orderLabel, verifyManual, audit, sendCorrection, mailPaused, launchHold });
 
 const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, async (req, res) => {
   for (const [header, value] of Object.entries(headers)) res.setHeader(header, value);
@@ -591,12 +594,13 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
       res.writeHead(200, { 'content-type': type });
       return res.end(readFileSync(new URL('./public/' + file, import.meta.url)));
     }
-    if (method === 'GET' && pathname === '/payment-qr.png' && qr) {
+    if (method === 'GET' && pathname === '/payment-qr.png' && qr && !launchHold) {
       res.writeHead(200, { 'content-type': 'image/png' });
       return res.end(qr);
     }
     if (method === 'GET' && pathname === '/api/catalog') {
-      return json(res, 200, { demo, razorpayTest, manual, upiId, payee, hasQr: Boolean(qr), basicFee, batches, events, states, workshops, summitOpen: isOpen('summit') });
+      return json(res, 200, { demo, razorpayTest, manual, upiId: launchHold ? '' : upiId, payee: launchHold ? '' : payee,
+        hasQr: Boolean(qr) && !launchHold, basicFee, batches, events, states, workshops, summitOpen: isOpen('summit'), launchHold });
     }
     if (method === 'POST' && pathname === '/api/register') {
       if (!allowRegistration(req)) {

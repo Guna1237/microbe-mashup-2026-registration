@@ -20,9 +20,13 @@ Store the generated passphrase privately. Keep SQLite, the staff file, the optio
 
 Use the Other preset, Node.js 24.x, root `./`, entry file `server.mjs` and no build command or output directory. Use the app port assigned by Hostinger. Set `PUBLIC_URL=https://microbemashup.org`, `DEMO=0`, `PAYMENT_MODE=manual`, `RAZORPAY_TEST=0` and `JOB_MODE=cron`. Use the absolute paths printed above for `DATA_DIR` and `STAFF_FILE`. Set the confirmed prices, verified UPI details, verified Resend sender and Resend API key in hPanel.
 
+On Linux, the app can also read `$HOME/microbe-mashup-data/runtime.env`. Keep it owned by the hosting account with mode `600`. If the same variable is set in hPanel, hPanel’s value takes precedence. Remove duplicate placeholder entries when switching to the private file.
+
+If the sending domain is still being verified, set `LAUNCH_HOLD=1`. The site loads with registration and workshop booking closed, and outgoing email is paused. Once Resend is verified and scheduled jobs are tested, set `LAUNCH_HOLD=0` and `MAIL_PAUSED=0`, then restart the app.
+
 ## Schedule payment and email jobs
 
-Managed Node.js hosting uses scheduled jobs for background work. Save a private copy of the required hPanel variables as `$HOME/microbe-mashup-data/job.env` and restrict it to your user with `chmod 600`. Do not put handles, keys or private QR files into the repository. This env file needs the same fees, sender, staff path and data path as the web app. Use `MAIL_PAUSED=1` for staging runs and `0` after the mail provider is ready.
+Managed Node.js hosting uses scheduled jobs for background work. If you use a private `runtime.env`, use that same file for the job. Otherwise save a private copy of the required hPanel variables as `$HOME/microbe-mashup-data/job.env` and restrict it to your user with `chmod 600`. Do not put handles, keys or private QR files into the repository. The job and web app need matching fees, sender, staff path and data path. Use `MAIL_PAUSED=1` for staging runs and `0` after the mail provider is ready.
 
 In SSH, confirm `command -v node` identifies Node 24 with `node --version`. Use the actual absolute Node executable path, account home directory and domain in the hPanel cron job instead of the placeholders below:
 

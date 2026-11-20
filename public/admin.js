@@ -67,6 +67,9 @@ async function refreshDashboard() {
   byId('dashboard').hidden = false;
   byId('admin-preview').hidden = !overview.demo;
   byId('mail-paused').hidden = !overview.mailPaused;
+  byId('mail-paused').textContent = overview.launchHold
+    ? 'Launch setup is in progress. Registration, workshop booking and outgoing email are paused.'
+    : 'Outgoing email is paused on this host.';
   staffRole = overview.role;
   const owner = staffRole === 'owner';
   const checkin = staffRole === 'checkin';
@@ -94,6 +97,10 @@ async function refreshDashboard() {
     const button = action(label + (open ? ' open · Pause' : ' paused · Reopen'), async () => {
       await change('controls', { name: key, open: !open });
     });
+    if (overview.launchHold) {
+      button.disabled = true;
+      button.textContent = label + ' closed for setup';
+    }
     return button;
   }) : [];
   byId('controls').replaceChildren(...controls);

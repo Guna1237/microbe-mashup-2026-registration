@@ -38,7 +38,7 @@ export function installAdminSchema(db) {
   }
 }
 
-export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publicUrl, local, json, read, uid, orderLabel, verifyManual, audit, sendCorrection, mailPaused }) {
+export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publicUrl, local, json, read, uid, orderLabel, verifyManual, audit, sendCorrection, mailPaused, launchHold }) {
   const credentials = new Map(accounts.map((account) => [account.user, account]));
   const fakeCredential = { salt: randomBytes(24).toString('hex'), hash: randomBytes(32).toString('hex') };
   const sessions = new Map();
@@ -217,7 +217,7 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
         const counts = stats();
         const visible = role === 'checkin' ? { summitPaid: counts.summitPaid, checkedIn: counts.checkedIn } : counts;
         return json(res, 200, { ...visible, controls: owner ? { summit: true, workshops: true, ...controls } : null,
-          manual, demo: local, mailPaused: owner && mailPaused, user, role });
+          manual, demo: local, mailPaused: owner && mailPaused, launchHold: owner && launchHold, user, role });
       }
       if (pathname === '/api/admin/orders') return json(res, 200, queue(url, role));
       if (pathname === '/api/admin/audit') {
@@ -267,6 +267,7 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
       }
       if (pathname === '/api/admin/controls') {
         if (!owner) return forbidden();
+        if (launchHold) throw new InputError('Registration is locked while launch setup is in progress.');
         if (!['summit', 'workshops'].includes(body.name) || typeof body.open !== 'boolean') {
           throw new InputError('Choose a valid registration control.');
         }

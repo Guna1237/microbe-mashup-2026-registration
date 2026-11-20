@@ -1,5 +1,5 @@
 import { randomBytes, scryptSync } from 'node:crypto';
-import { readFileSync, renameSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync, existsSync, unlinkSync, realpathSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -30,7 +30,7 @@ export function previewStaff(password) {
   return [makeAccount('organizer', 'owner', password)];
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && existsSync(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const [, , operation, user, value, file] = process.argv;
   const location = operation === 'create' ? file : value;
   if (!accountName.test(user || '') || !isAbsolute(location || '') || !['create', 'remove'].includes(operation)) {

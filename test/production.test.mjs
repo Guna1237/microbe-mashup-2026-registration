@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, copyFileSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, copyFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -78,6 +78,7 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     }
     const env = {
       ...process.env, DEMO: '0', RAZORPAY_TEST: '0', MAIL_PAUSED: '1', TRUST_LOOPBACK_PROXY: '1',
+      LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '',
       PRICES_CONFIRMED: 'true', STAFF_FILE: staffFile, PUBLIC_URL: origin, DATA_DIR: join(root, 'live'),
       BASIC_FEE: '800', IPC_FEE: '2500', ANTIBIOTIC_FEE: '2200', BEYOND_FEE: '4999',
       PAYMENT_MODE: 'manual', MANUAL_UPI_ID: 'test@example', MANUAL_PAYEE: 'QA only', MANUAL_QR_FILE: '',
@@ -108,6 +109,20 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     await finance('admin/controls', 403, { name: 'summit', open: false });
     await frontDesk('admin/audit', 403);
     await frontDesk('admin/export', 403);
+
+    const config = join(root, 'runtime.env');
+    writeFileSync(config, 'LAUNCH_HOLD=1\n', { mode: 0o600 });
+    const { LAUNCH_HOLD, ...holdConfig } = env;
+    const hold = await boot({ ...holdConfig, MASHUP_ENV_FILE: config, RESEND_API_KEY: '', MAIL_FROM: '',
+      DATA_DIR: join(root, 'launch-hold') }, (fn) => cleanup.push(fn));
+    const holding = api(hold);
+    const { data: heldCatalog } = await holding('catalog', 200);
+    assert.equal(heldCatalog.launchHold, true);
+    assert.equal(heldCatalog.summitOpen, false);
+    assert.equal(heldCatalog.upiId, '');
+    await holding('register', 400, { ...attendee, email: 'hold@example.test' });
+    const holdOwner = await signIn('event-owner', 'owner', hold);
+    await holdOwner('admin/controls', 400, { name: 'summit', open: true });
 
     await owner('admin/controls', 200, { name: 'summit', open: false });
     await guest('register', 400, { ...attendee, email: 'sample@example.test' });
@@ -195,7 +210,7 @@ test('cron mode sends queued demo email once across overlapping processes', { ti
     const env = {
       ...process.env, DEMO: '1', RAZORPAY_TEST: '0', PAYMENT_MODE: 'manual',
       JOB_MODE: 'cron', DEMO_DATA_DIR: root, STAFF_FILE: '', ADMIN_PASSWORD: '',
-      MAIL_PAUSED: '0', WHATSAPP_URL: '',
+      MAIL_PAUSED: '0', WHATSAPP_URL: '', LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '',
     };
     const base = await boot(env, (fn) => { stop = fn; });
     const reply = await fetch(base + '/api/register', {

@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, statSync, unlinkSync } from 'node:fs';
+import { closeSync, existsSync, openSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
@@ -32,7 +32,7 @@ export function createBackup(db, file) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && existsSync(process.argv[1]) && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   const [, , file] = process.argv;
   if (!file) throw new Error('Provide a backup file to verify.');
   console.log('SQLite backup verified:', checkBackup(file));

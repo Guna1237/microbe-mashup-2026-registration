@@ -47,8 +47,10 @@ function activityOptions() {
 
 function showRegistration(version) {
   if (!catalog.summitOpen) {
-    show(title('Summit registration is paused') +
-      '<p class="intro">If you already registered, use the personal link in your registration email to complete payment or check its status.</p>');
+    show(title(catalog.launchHold ? 'Registration opens soon' : 'Summit registration is paused') +
+      (catalog.launchHold
+        ? '<p class="intro">Check back here when registration opens. Please wait to pay until you receive payment instructions from the site.</p>'
+        : '<p class="intro">If you already registered, use the personal link in your registration email to complete payment or check its status.</p>'));
     return;
   }
   show(title('Register for the summit') + `
