@@ -120,6 +120,26 @@ function empty(container, text) {
   container.replaceChildren(node('p', text, 'empty'));
 }
 
+function paymentReference(utr) {
+  const row = node('div', undefined, 'payment-reference');
+  const code = node('code', utr);
+  const copy = action('Copy UPI ref', async () => {
+    try {
+      await navigator.clipboard.writeText(utr);
+      copy.textContent = 'Copied';
+    } catch {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      copy.textContent = 'Selected · copy';
+    }
+  });
+  row.append(code, copy);
+  return row;
+}
+
 function renderOrder(order) {
   const item = node('article', undefined, 'order-item');
   const person = node('div');
@@ -137,7 +157,8 @@ function renderOrder(order) {
   else if (order.reason) status = 'Correction requested';
   else if (order.state !== 'pending') status = order.state;
   payment.append(node('span', status + (order.amount === undefined ? '' : ' · ' + money.format(order.amount)), 'queue-status' + (paid ? ' verified' : '')));
-  if (order.utr) payment.append(node('p', 'UPI ref ' + order.utr));
+  if (order.utr) payment.append(paymentReference(order.utr));
+  if (order.submittedAt) payment.append(node('p', 'Submitted ' + time.format(order.submittedAt)));
   if (staffRole !== 'checkin') payment.append(node('p', order.ref));
   const controls = node('div', undefined, 'actions');
   if (!paid && order.utr && order.state === 'pending') {
@@ -228,14 +249,23 @@ function pickTab(tab) {
   return refreshView();
 }
 
-function reviewPayment(order, reject) {
+function reviewPayment(order, reject, initialReason = '') {
   paymentAction = { order, reject };
   byId('review-heading').textContent = reject ? 'Request a payment correction' : 'Verify UPI payment';
-  byId('review-help').textContent = order.attendeeId + ' · ' + order.label + ' · ' +
-    money.format(order.amount) + ' · UPI ref ' + order.utr;
-  byId('review-submit').textContent = reject ? 'Send back for correction' : 'Mark payment verified';
+  byId('review-help').textContent = order.name + ' · ' + order.attendeeId + ' · ' + order.label +
+    (order.members?.length ? ' · ' + (order.members.length + 1) + ' participants' : '');
+  byId('review-submit').textContent = reject ? 'Send back for correction' : 'Verify ' + money.format(order.amount);
   setMessage('review-error');
   const fields = byId('review-fields');
+  const comparison = node('div', undefined, 'payment-comparison');
+  const amount = node('div');
+  amount.append(node('small', 'Expected credit'), node('strong', money.format(order.amount)));
+  const reference = node('div');
+  reference.append(node('small', 'UPI transaction reference'), paymentReference(order.utr));
+  comparison.append(amount, reference);
+  const selections = order.selections?.length ? node('p', order.selections.map(({ name }) => name).join(', '), 'hint') : null;
+  fields.replaceChildren(comparison);
+  if (selections) fields.append(selections);
   if (reject) {
     const label = node('label', 'Why does the payment need correction?', 'field');
     const select = node('select');
@@ -246,26 +276,22 @@ function reviewPayment(order, reject) {
       option.value = id;
       select.append(option);
     }
+    select.value = initialReason;
     label.append(select);
-    fields.replaceChildren(label);
+    fields.append(label);
   } else {
-    const label = node('label', 'Amount credited in rupees', 'field');
-    const input = node('input');
-    input.name = 'amount';
-    input.type = 'number';
-    input.min = '1';
-    input.required = true;
-    input.inputMode = 'numeric';
-    label.append(input);
     const confirmation = node('label', undefined, 'consent');
     const box = node('input');
     box.type = 'checkbox';
     box.name = 'matched';
     box.required = true;
-    confirmation.append(box, node('span', 'I matched this UPI reference and amount against the receiving account.'));
-    fields.replaceChildren(label, confirmation);
+    confirmation.append(box, node('span', 'I found this exact UPI reference and a settled credit of ' + money.format(order.amount) + ' in the receiving account.'));
+    const correction = action('Amount differs', () => reviewPayment(order, true, 'wrong-amount'));
+    correction.classList.add('payment-difference');
+    fields.append(confirmation, correction);
   }
-  review.showModal();
+  if (!review.open) review.showModal();
+  if (reject) fields.querySelector('select').focus();
 }
 
 function guarded(handler) {
@@ -311,7 +337,7 @@ byId('review-form').addEventListener('submit', (event) => {
   const { order, reject } = paymentAction;
   const body = { ref: order.ref, utr: order.utr };
   if (reject) body.reason = form.elements.reason.value;
-  else { body.amount = Number(form.elements.amount.value); body.matched = form.elements.matched.checked; }
+  else { body.amount = order.amount; body.matched = form.elements.matched.checked; }
   withButton(byId('review-submit'), async () => {
     const result = await api(reject ? 'reject' : 'verify', body);
     review.close();

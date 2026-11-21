@@ -19,7 +19,7 @@ Run `npm test` to exercise 525 synthetic registrations, all three group rates, i
 
 1. Use `PAYMENT_MODE=manual`. Before publishing, set `MANUAL_UPI_ID` and `MANUAL_PAYEE` to the organizer's verified receiving account details. To display the existing QR, set `MANUAL_QR_FILE` to the absolute path of that account's PNG QR image. Preview uses no real payment details.
 2. The attendee sees the exact amount, pays by UPI, and enters the transaction reference. The site prevents one reference from being used for multiple orders. A submitted reference leaves the order pending.
-3. Open **Organizer dashboard → Orders & check-in → Needs payment review**. Match the UPI reference and credited amount against the bank or merchant app. Choose **Verify**, type the credited amount and confirm the match. Choose **Request correction** to send a payment-status link with the reason. Basic approval unlocks Events & Workshops for each participant. Review each combined activity checkout the same way.
+3. Open **Organizer dashboard → Orders & check-in → Needs payment review**. Copy the UPI reference and compare the displayed amount with the settled credit in the bank or merchant app. In **Verify**, confirm the exact reference and amount match. Choose **Amount differs** or **Request correction** to send a payment-status link with the reason. Basic approval unlocks Events & Workshops for each participant. Review each combined activity checkout the same way.
 
    The same approval is available on the host if the dashboard is unavailable:
 
