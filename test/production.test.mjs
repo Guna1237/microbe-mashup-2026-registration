@@ -278,40 +278,42 @@ test('group passes issue individual IDs and activity checkout uses the correct i
       ...attendee, name: prefix + ' Member ' + (index + 1), email: prefix + index + '@example.test',
       batch: index === 1 ? 'bds24' : 'mbbs24',
     }));
-    await guest('register', 400, { members: membersFor(2, 'invalid'), consent: true, groupConsent: true });
-    const trio = membersFor(3, 'trio');
-    await guest('register', 400, { members: [trio[0], trio[0], trio[1]], consent: true, groupConsent: true });
-    const group = (await guest('register', 200, { members: trio, consent: true, groupConsent: true })).data;
+    for (const size of [2, 3, 5]) {
+      await guest('register', 400, { members: membersFor(size, 'invalid'), consent: true, groupConsent: true });
+    }
+    const four = membersFor(4, 'four');
+    await guest('register', 400, { members: [four[0], four[0], four[1], four[2]], consent: true, groupConsent: true });
+    const group = (await guest('register', 200, { members: four, consent: true, groupConsent: true })).data;
     const leaderPayment = call(group.token);
     const pending = (await leaderPayment('payment', 200)).data;
-    assert.equal(pending.amount, 2250);
-    assert.equal(pending.partySize, 3);
+    assert.equal(pending.amount, 2880);
+    assert.equal(pending.partySize, 4);
     assert.equal(pending.participantId, null);
     assert.equal(pending.workshopToken, null);
-    await guest('register/access', 200, { email: trio[0].email });
-    await guest('register/access', 200, { email: trio[0].email });
-    await guest('register/access', 200, { email: trio[1].email });
+    await guest('register/access', 200, { email: four[0].email });
+    await guest('register/access', 200, { email: four[0].email });
+    await guest('register/access', 200, { email: four[1].email });
     await guest('register/access', 200, { email: 'unlisted@example.test' });
     const receipt = (await leaderPayment('payment/reference', 200, { utr: '333333444444' })).data;
-    await owner('admin/verify', 200, { ref: receipt.orderReference, utr: receipt.utr, amount: 2250, matched: true });
+    await owner('admin/verify', 200, { ref: receipt.orderReference, utr: receipt.utr, amount: 2880, matched: true });
     run(['server.mjs', 'jobs:drain'], env);
     const messages = readFileSync(join(root, 'outbox.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
     assert.equal(messages.some(({ subject }) => /registration received/i.test(subject)), false);
     const recovery = messages.filter(({ subject }) => subject.includes('Recover your Basic Registration'));
     assert.equal(recovery.length, 2);
-    assert.ok(recovery.find(({ to }) => to === trio[0].email).text.includes('#payment='));
-    assert.ok(!recovery.find(({ to }) => to === trio[1].email).text.includes('#payment='));
+    assert.ok(recovery.find(({ to }) => to === four[0].email).text.includes('#payment='));
+    assert.ok(!recovery.find(({ to }) => to === four[1].email).text.includes('#payment='));
     const confirmations = messages.filter(({ subject }) => subject.includes('confirmed'));
-    assert.equal(confirmations.length, 3);
+    assert.equal(confirmations.length, 4);
     const ids = confirmations.map((mail) => ({
       id: /Registration ID: (MMSPH-\d+)/.exec(mail.text)[1],
       token: /#access=([A-Za-z0-9_-]+)/.exec(mail.text)[1],
       email: mail.to,
     }));
-    assert.equal(new Set(ids.map(({ id }) => id)).size, 3);
-    assert.equal(new Set(ids.map(({ token }) => token)).size, 3);
-    const person = ids.find(({ email }) => email === trio[0].email);
-    const member = ids.find(({ email }) => email === trio[1].email);
+    assert.equal(new Set(ids.map(({ id }) => id)).size, 4);
+    assert.equal(new Set(ids.map(({ token }) => token)).size, 4);
+    const person = ids.find(({ email }) => email === four[0].email);
+    const member = ids.find(({ email }) => email === four[1].email);
     await guest('activities/unlock', 400, { registrationId: person.id });
     await call(person.token)('activities/unlock', 400, { registrationId: member.id });
     await call(member.token)('activities/unlock', 200, { registrationId: member.id });
@@ -331,12 +333,8 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     assert.equal(report.find(({ id }) => id === 'ipc').paid, 1);
     assert.equal(report.find(({ id }) => id === 'quiz').paid, 1);
     const checkinRows = (await owner('admin/orders?view=check-in', 200)).data.rows;
-    assert.equal(checkinRows.length, 3);
+    assert.equal(checkinRows.length, 4);
     assert.equal(checkinRows.filter(({ checkedInAt }) => checkedInAt).length, 1);
-    for (const [size, total] of [[4, 3000], [5, 3500]]) {
-      const created = (await guest('register', 200, { members: membersFor(size, 'set' + size), consent: true, groupConsent: true })).data;
-      assert.equal((await call(created.token)('payment', 200)).data.amount, total);
-    }
     await guest('activities/access', 200, { registrationId: person.id, email: person.email });
     await guest('activities/access', 200, { registrationId: person.id, email: person.email });
     run(['server.mjs', 'jobs:drain'], env);

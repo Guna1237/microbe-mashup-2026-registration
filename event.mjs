@@ -8,7 +8,7 @@ function fee(name, fallback) {
 }
 
 export const basicFee = fee('BASIC_FEE', 800);
-export const basicRates = { 1: basicFee, 3: 750, 4: 750, 5: 700 };
+export const basicRates = { 1: basicFee, 4: 720 };
 
 export const batches = [
   { id: 'mbbs24', name: '2k24 MBBS', competition: true },
@@ -99,7 +99,7 @@ export function registration(body) {
   if (body.events?.length) throw new InputError('Book events separately after Basic Registration.');
   const members = body.members === undefined ? [body] : body.members;
   if (!Array.isArray(members) || !Object.hasOwn(basicRates, members.length)) {
-    throw new InputError('Register individually or choose a group of 3, 4 or 5.');
+    throw new InputError('Register individually or as a group of four.');
   }
   if (members.length > 1 && body.groupConsent !== true) throw new InputError('Confirm you can share the group members’ details.');
   const people = members.map(participant);

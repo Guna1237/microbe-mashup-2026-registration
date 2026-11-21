@@ -2,7 +2,7 @@
 
 Two forms on one website for the 11–12 December 2026 student summit hosted by the Department of Microbiology at Mamata Academy of Medical Sciences.
 
-- **Basic Registration** is mandatory. Individuals pay ₹800. Groups of 3 or 4 pay ₹750 per person, and groups of 5 pay ₹700 per person. One leader submits the group details and pays once. After verification, every member receives their own `MMSPH-###` ID and private booking link.
+- **Basic Registration** is mandatory. Individuals pay ₹800. Groups of four pay ₹720 per person (₹2,880 total). One leader submits the group details and pays once. After verification, every member receives their own `MMSPH-###` ID and private booking link.
 - **Events & Workshops** verifies the attendee’s private link and their own Registration ID. Eligible attendees can choose events, including the three-person Microbe Mayhem competition, and workshops. Selected activities share one checkout, with duplicate activity bookings prevented.
 - **Payments** use organizer-verified UPI by default. Attendees enter their UPI reference, and organizers approve only after matching the settled payment against the receiving account. Razorpay is available as an optional alternative.
 - **Email** uses Brevo with a persistent queue. Each verified Basic Registration gets an individual ID, private booking link, and any configured WhatsApp invite. Payment corrections and access recovery go by email. Attendees can bookmark their payment page to check status. `MAIL_NOTICES=all` also sends receipt and activity confirmation emails.

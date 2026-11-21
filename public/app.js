@@ -76,7 +76,7 @@ function showBasic(version) {
       <section id="basic-details">
         ${select('size', 'Registration type', [
           { id: 1, name: 'Individual · ' + money(catalog.basicRates[1]) },
-          ...[3, 4, 5].map((size) => ({ id: size, name: 'Group of ' + size + ' · ' + money(catalog.basicRates[size]) + ' per person' })),
+          ...Object.keys(catalog.basicRates).map(Number).filter((size) => size > 1).map((size) => ({ id: size, name: 'Group of ' + size + ' · ' + money(catalog.basicRates[size]) + ' per person' })),
         ])}
         <p class="hint" id="group-note" hidden>The group leader pays the total once. Each member receives a separate email and Registration ID.</p>
         <div id="people"></div>
