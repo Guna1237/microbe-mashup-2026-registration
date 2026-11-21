@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
-import { resendFailure } from '../mail-policy.mjs';
+import { brevoFailure } from '../mail-policy.mjs';
 
 const origin = 'https://register.example.test';
 const node = process.execPath;
@@ -19,14 +19,12 @@ const attendee = {
   meal: 'Veg', consent: true, events: [],
 };
 
-test('provider backoff respects UTC quota resets and rate-limit headers', () => {
+test('Brevo backoff respects credit limits and rate-limit headers', () => {
   const now = Date.UTC(2026, 10, 30, 22, 15);
-  const reset = Date.UTC(2026, 11, 1) + 30000;
-  assert.equal(resendFailure(429, 'daily_quota_exceeded', null, now).retryAt, reset);
-  assert.equal(resendFailure(429, 'monthly_quota_exceeded', null, now).retryAt, reset);
-  assert.equal(resendFailure(429, 'rate_limit_exceeded', '3', now).retryAt, now + 3000);
-  assert.ok(resendFailure(403, '', null, now).pauseQueue);
-  assert.equal(resendFailure(503, '', null, now).definitivelyRejected, false);
+  assert.equal(brevoFailure(402, 'not_enough_credits', null, now).retryAt, now + 3600000);
+  assert.equal(brevoFailure(429, '', '3', now).retryAt, now + 3000);
+  assert.ok(brevoFailure(403, '', null, now).pauseQueue);
+  assert.equal(brevoFailure(503, '', null, now).definitivelyRejected, false);
 });
 
 async function availablePort() {
@@ -96,7 +94,7 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
       PRICES_CONFIRMED: 'true', STAFF_FILE: staffFile, PUBLIC_URL: origin, DATA_DIR: join(root, 'live'),
       BASIC_FEE: '800', IPC_FEE: '2500', ANTIBIOTIC_FEE: '2200', BEYOND_FEE: '4999',
       PAYMENT_MODE: 'manual', MANUAL_UPI_ID: 'test@example', MANUAL_PAYEE: 'QA only', MANUAL_QR_FILE: testQr,
-      RESEND_API_KEY: 'unused-test-key', MAIL_FROM: 'Event Test <mail@example.test>', WHATSAPP_URL: '',
+      BREVO_API_KEY: 'unused-test-key', BREVO_SENDER_EMAIL: 'mail@example.test', MAIL_NOTICES: 'all', WHATSAPP_URL: '',
     };
     assert.throws(() => run(['server.mjs', 'preflight'], { ...env, PRICES_CONFIRMED: 'false' }));
     assert.throws(() => run(['server.mjs', 'preflight'], { ...env, STAFF_FILE: '', ADMIN_PASSWORD: 'shared-password-is-not-supported' }));
@@ -136,7 +134,7 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     writeFileSync(config, 'LAUNCH_HOLD=1\nMASHUP_PUBLIC_URL=' + origin + '\n', { mode: 0o600 });
     const { LAUNCH_HOLD, MASHUP_PUBLIC_URL, ...holdConfig } = env;
     const hold = await boot({ ...holdConfig, PUBLIC_URL: 'https://host-injected.example.test',
-      MASHUP_ENV_FILE: config, RESEND_API_KEY: '', MAIL_FROM: '',
+      MASHUP_ENV_FILE: config, BREVO_API_KEY: '', BREVO_SENDER_EMAIL: '',
       DATA_DIR: join(root, 'launch-hold') }, (fn) => cleanup.push(fn));
     const holding = api(hold);
     const { data: heldCatalog } = await holding('catalog', 200);
@@ -215,19 +213,29 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     const providerMock = join(root, 'provider-mock.mjs');
     const requestLog = join(root, 'provider-requests.log');
     writeFileSync(providerMock, `import { appendFileSync } from 'node:fs';
-      globalThis.fetch = async (url) => {
-        if (url !== 'https://api.resend.com/emails') throw new Error('Unexpected network request');
+      globalThis.fetch = async (url, request) => {
+        if (request.headers['api-key'] !== 'unused-test-key') throw new Error('Missing test key');
+        if (url === 'https://api.brevo.com/v3/senders') {
+          return Response.json({ senders: [{ active: true, email: 'mail@example.test' }] });
+        }
+        if (url !== 'https://api.brevo.com/v3/smtp/email') throw new Error('Unexpected network request');
+        const payload = JSON.parse(request.body);
+        if (payload.sender.email !== 'mail@example.test' ||
+            !payload.messageVersions[0].to[0].email.endsWith('@example.test') ||
+            !/^[0-9a-f-]{36}$/.test(payload.headers.idempotencyKey)) throw new Error('Invalid Brevo payload');
         appendFileSync(process.env.MOCK_REQUEST_LOG, 'attempt\\n');
-        return Response.json({ name: 'daily_quota_exceeded' }, { status: 429 });
+        return Response.json({ code: 'not_enough_credits' }, { status: 402 });
       };`);
     const mockEnv = { ...env, MAIL_PAUSED: '0', MOCK_REQUEST_LOG: requestLog };
     const worker = ['--import', pathToFileURL(providerMock).href, 'server.mjs', 'jobs:drain'];
+    assert.match(run([...worker.slice(0, -1), 'check-brevo'], mockEnv), /No email was sent/);
     run(worker, mockEnv);
     run(worker, mockEnv);
     assert.equal(readFileSync(requestLog, 'utf8'), 'attempt\n');
     const outbox = (await owner('admin/mail', 200)).data;
-    assert.match(outbox.provider.reason, /daily quota/);
+    assert.match(outbox.provider.reason, /credits/);
     assert.equal(outbox.entries[0].first_attempt, null);
+    assert.equal(outbox.entries[0].canRetry, 1);
 
     const snapshot = join(root, 'backup.sqlite');
     assert.match(run(['server.mjs', 'backup', snapshot], env), /attendees: 525/);
@@ -259,7 +267,7 @@ test('group passes issue individual IDs and activity checkout uses the correct i
   try {
     const env = { ...process.env, DEMO: '1', RAZORPAY_TEST: '0', PAYMENT_MODE: 'manual',
       JOB_MODE: 'cron', DEMO_DATA_DIR: root, STAFF_FILE: '', ADMIN_PASSWORD: '',
-      MAIL_PAUSED: '0', WHATSAPP_URL: '', LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '',
+      MAIL_PAUSED: '0', MAIL_NOTICES: 'essential', WHATSAPP_URL: '', LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '',
     };
     const base = await boot(env, (fn) => { stop = fn; });
     const call = (token, cookie) => (path, status, body) => api(base, { token, cookie })(path, status, body, { origin: base });
@@ -288,6 +296,7 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     await owner('admin/verify', 200, { ref: receipt.orderReference, utr: receipt.utr, amount: 2250, matched: true });
     run(['server.mjs', 'jobs:drain'], env);
     const messages = readFileSync(join(root, 'outbox.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(messages.some(({ subject }) => /registration received/i.test(subject)), false);
     const recovery = messages.filter(({ subject }) => subject.includes('Recover your Basic Registration'));
     assert.equal(recovery.length, 2);
     assert.ok(recovery.find(({ to }) => to === trio[0].email).text.includes('#payment='));
@@ -348,7 +357,7 @@ test('cron mode sends queued demo email once across overlapping processes', { ti
     const env = {
       ...process.env, DEMO: '1', RAZORPAY_TEST: '0', PAYMENT_MODE: 'manual',
       JOB_MODE: 'cron', DEMO_DATA_DIR: root, STAFF_FILE: '', ADMIN_PASSWORD: '',
-      MAIL_PAUSED: '0', WHATSAPP_URL: '', LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '',
+      MAIL_PAUSED: '0', MAIL_NOTICES: 'all', WHATSAPP_URL: '', LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '',
     };
     const base = await boot(env, (fn) => { stop = fn; });
     const reply = await fetch(base + '/api/register', {

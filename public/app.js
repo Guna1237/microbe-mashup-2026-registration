@@ -171,7 +171,11 @@ function showBasic(version) {
       } });
       if (version !== generation) return;
       if (result.existing) {
-        message('At least one email is already registered. Check the original confirmation or payment email, or contact the organizers if you need to change your group.');
+        const link = document.createElement('a');
+        link.href = '#recover';
+        link.textContent = 'Find an existing registration';
+        message('At least one email is already registered. ');
+        notice.append(link);
       } else location.hash = 'payment=' + result.token;
     } finally { back.disabled = false; }
   });
@@ -306,10 +310,12 @@ async function showPayment(token, version) {
         ? (order.partySize > 1 ? 'Each group member receives their own Registration ID and booking link by email.' : 'Keep your Registration ID to book Events & Workshops and check in at the summit.')
         : 'Your activity bookings are confirmed.') :
         pending ? (order.manual ? (order.reviewMessage ? 'Check the note from the organizers and review your payment details.' :
-          awaiting ? 'The organizers will check your payment and email you once it’s verified.' :
+          awaiting ? (order.product === 'summit' || catalog.mailAll ?
+            'The organizers will check your payment and email you once it’s verified.' :
+            'The organizers will check your payment. Reopen this page to see the result.') :
           'Pay the exact amount by UPI and enter the transaction reference from your banking app.') :
           catalog.demo ? 'Simulate a successful payment to preview confirmation.' :
-          'Pay on Razorpay, then return here to check the status. Your confirmation email is sent after verification.') :
+          'Pay on Razorpay, then return here to check the status.') :
           'Contact the organizers to arrange a new payment link.') + '</p><div class="actions"></div>');
     const actions = screen.querySelector('.actions');
     if (order.workshopToken) {
@@ -436,7 +442,7 @@ function showManualPayment(order, actions, token, version, render) {
       const data = await api('payment/reference', { method: 'POST', token, body: { utr: form.elements.utr.value } });
       if (version === generation) {
         render(data);
-        message('Payment reference saved. Keep your banking receipt until the organizers confirm.');
+        message('Payment reference saved. Keep your banking receipt and bookmark this page to check your status.');
       }
     } catch (error) { if (version === generation) message(error.message); }
     finally { button.disabled = false; }

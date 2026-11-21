@@ -221,7 +221,7 @@ async function refreshView() {
     } else if (tab === 'mail') {
       main.append(node('h3', entry.subject), node('p', entry.recipient));
       meta.append(node('p', entry.error || 'Queued for sending'));
-      if (entry.error && (!entry.first_attempt || Date.now() - entry.first_attempt < 23 * 3600000)) {
+      if (entry.canRetry) {
         const buttons = node('div', undefined, 'actions');
         buttons.append(action('Retry email', () => change('retry-email', { id: entry.id })));
         item.append(main, meta, buttons);

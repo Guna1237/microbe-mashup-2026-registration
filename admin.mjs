@@ -1,6 +1,7 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { InputError, activities } from './event.mjs';
+import { retryWindowMs } from './mail-policy.mjs';
 
 export const previewPassword = 'mashup-local-preview-only';
 const deriveKey = promisify(scrypt);
@@ -269,9 +270,11 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
       }
       if (pathname === '/api/admin/mail') {
         if (!owner) return forbidden();
-        const provider = get("SELECT retry_at AS retryAt,reason FROM mail_provider WHERE name='resend' AND retry_at>?", Date.now());
-        return json(res, 200, { provider, entries: all(`SELECT id,recipient,subject,error,first_attempt,next_attempt
-          FROM mail WHERE sent IS NULL ORDER BY error IS NULL, rowid LIMIT 50`) });
+        const now = Date.now();
+        const provider = get("SELECT retry_at AS retryAt,reason FROM mail_provider WHERE name='brevo' AND retry_at>?", now);
+        return json(res, 200, { provider, entries: all(`SELECT id,recipient,subject,error,first_attempt,next_attempt,
+          error IS NOT NULL AND (first_attempt IS NULL OR (send_provider='brevo' AND first_attempt>?)) AS canRetry
+          FROM mail WHERE sent IS NULL ORDER BY error IS NULL, rowid LIMIT 50`, now - retryWindowMs) });
       }
       if (pathname === '/api/admin/export') {
         if (!owner) return forbidden();
@@ -305,8 +308,8 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
         const now = Date.now();
         atomic(() => {
           const result = run(`UPDATE mail SET next_attempt=? WHERE id=? AND sent IS NULL
-            AND error IS NOT NULL AND (first_attempt IS NULL OR first_attempt>?)`,
-            now, body.id, now - 23 * 3600000);
+            AND error IS NOT NULL AND (first_attempt IS NULL OR (send_provider='brevo' AND first_attempt>?))`,
+            now, body.id, now - retryWindowMs);
           if (!result.changes) throw new InputError('This email is already sent, queued, or past the safe retry window.');
           audit('email-retry-requested', body.id, '', user);
         });

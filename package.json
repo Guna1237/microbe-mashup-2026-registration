@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server.mjs",
     "check-razorpay": "node --env-file-if-exists=.env server.mjs check-razorpay",
+    "check-brevo": "node --env-file-if-exists=.env server.mjs check-brevo",
     "verify-payment": "node --env-file-if-exists=.env server.mjs verify-payment",
     "staff:create": "node staff.mjs create",
     "staff:remove": "node staff.mjs remove",

@@ -27,7 +27,7 @@ In the environment file set:
 - `DATA_DIR=/var/lib/microbe-mashup` and `STAFF_FILE=/etc/microbe-mashup/staff.json`.
 - The confirmed fee amounts, followed by `PRICES_CONFIRMED=true`.
 - `PAYMENT_MODE=manual`, the organizer's verified `MANUAL_UPI_ID` and `MANUAL_PAYEE`, and optionally an absolute path to the verified UPI PNG. Store that PNG outside the Git checkout, where the service can read it.
-- The verified Resend `MAIL_FROM`, `RESEND_API_KEY` and `REPLY_TO=mams.microbemashup@gmail.com`. Set `MAIL_PAUSED=1` if you're rehearsing with the recovered database and don't want that rehearsal to send messages.
+- The verified Brevo `BREVO_SENDER_EMAIL`, `BREVO_API_KEY` and `REPLY_TO=mams.microbemashup@gmail.com`. Set `MAIL_PAUSED=1` if you're rehearsing with the recovered database and don't want that rehearsal to send messages.
 
 Keep the application port inaccessible from the internet. The app listens on loopback. Allow HTTPS and HTTP on ports 443 and 80 for Caddy, along with your restricted admin SSH access. Use the supplied Caddy config with your real hostname in place of `register.example.com`. On a VPS already hosting sites, add this site block to the existing Caddy configuration.
 
@@ -56,4 +56,4 @@ sudo -u microbe-mashup /usr/bin/node /opt/microbe-mashup/ops.mjs /var/lib/microb
 
 Verify each snapshot, and keep a protected off-server copy. Back up the staff and environment files separately in encrypted storage. The SQLite snapshot contains attendee and payment records.
 
-To restore, verify the snapshot, stop the service and preserve the old data directory with its SQLite sidecar files. Place the snapshot in a fresh private data directory as `mashup.sqlite`. Set the new `DATA_DIR` and use `MAIL_PAUSED=1` during the rehearsal. With a stale backup, compare later bank payments and the Resend delivery log before resuming email or accepting registrations. Once reconciled, enable email and restart. Never copy only an active SQLite file while WAL writes may still be pending.
+To restore, verify the snapshot, stop the service and preserve the old data directory with its SQLite sidecar files. Place the snapshot in a fresh private data directory as `mashup.sqlite`. Set the new `DATA_DIR` and use `MAIL_PAUSED=1` during the rehearsal. With a stale backup, compare later bank payments and the Brevo delivery log before resuming email or accepting registrations. Once reconciled, enable email and restart. Never copy only an active SQLite file while WAL writes may still be pending.

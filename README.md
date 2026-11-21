@@ -5,7 +5,7 @@ Two forms on one website for the 11–12 December 2026 student summit hosted by 
 - **Basic Registration** is mandatory. Individuals pay ₹800. Groups of 3 or 4 pay ₹750 per person, and groups of 5 pay ₹700 per person. One leader submits the group details and pays once. After verification, every member receives their own `MMSPH-###` ID and private booking link.
 - **Events & Workshops** verifies the attendee’s private link and their own Registration ID. Eligible attendees can choose events, including the three-person Microbe Mayhem competition, and workshops. Selected activities share one checkout, with duplicate activity bookings prevented.
 - **Payments** use organizer-verified UPI by default. Attendees enter their UPI reference, and organizers approve only after matching the settled payment against the receiving account. Razorpay is available as an optional alternative.
-- **Email** uses Resend with a persistent queue. The acknowledgment contains the payment-status link. The verified Basic Registration email contains the individual ID, private booking link, and any configured WhatsApp invite. Verified activity orders get a separate confirmation with the selected items.
+- **Email** uses Brevo with a persistent queue. Each verified Basic Registration gets an individual ID, private booking link, and any configured WhatsApp invite. Payment corrections and access recovery go by email. Attendees can bookmark their payment page to check status. `MAIL_NOTICES=all` also sends receipt and activity confirmation emails.
 
 Place the official Summit Brochure at `public/summit-brochure.pdf` and redeploy. The brochure page displays an availability message until that file is present.
 
@@ -35,7 +35,7 @@ Run `npm test` to exercise 525 synthetic registrations, all three group rates, i
 - Pause or reopen Basic Registration and Events & Workshops independently. Existing orders can still be paid.
 - Open **Event & workshop roster** to see paid and awaiting-payment counts by activity. **View bookings** opens the filtered order list. Use **Summit check-in** to mark each group member separately.
 - **Owners** manage registration, payment reviews, check-in, the email queue, the private roster export and the activity log. **Payment reviewers** can review, approve and request corrections. **Check-in staff** see only paid summit attendees' names, IDs and check-in status. The log identifies the staff account behind each dashboard change.
-- Owners can retry recent failed mail sends. The queue shows when Resend is rate- or quota-limited and waits for the provider reset. For older, ambiguous sends, check the provider's delivery log before sending again.
+- Owners can retry recent failed mail sends. The queue shows when Brevo pauses sends because of its rate or credit limits. For older, ambiguous sends, check the provider's delivery log before sending again.
 - To add or rotate a staff account, run `npm run staff:create -- USER ROLE ABSOLUTE_STAFF_FILE`. To revoke an account, run `npm run staff:remove -- USER ABSOLUTE_STAFF_FILE`. Restart the service to apply changes and revoke existing sessions.
 
 ## Optional Razorpay checkout
@@ -43,7 +43,7 @@ Run `npm test` to exercise 525 synthetic registrations, all three group rates, i
 1. In the [Razorpay Dashboard](https://dashboard.razorpay.com/), select **Test Mode**, then **Account & Settings → API Keys → Generate Key**. Keep the key secret in your local `.env`.
 2. Set `DEMO=0`, `PAYMENT_MODE=razorpay`, `RAZORPAY_TEST=1`, `RAZORPAY_KEY_ID=rzp_test_…` and `RAZORPAY_KEY_SECRET` to the corresponding secret. Save the file.
 3. Run `npm run check-razorpay`. This makes a read-only API request and prints whether Razorpay accepts the credentials.
-4. Run `npm start`, open `http://127.0.0.1:8108` and submit a test registration. Use the hosted Razorpay test checkout, then check the registration page for verification. Local Test Mode writes email to `razorpay-test-data/outbox.jsonl` and keeps test records in that folder. You can use test mode without a Resend account or a public domain.
+4. Run `npm start`, open `http://127.0.0.1:8108` and submit a test registration. Use the hosted Razorpay test checkout, then check the registration page for verification. Local Test Mode writes email to `razorpay-test-data/outbox.jsonl` and keeps test records in that folder. You can use test mode without a Brevo account or a public domain.
 
 For real payments, set `RAZORPAY_TEST=0` and use `rzp_live_…` credentials after completing the launch steps below.
 
@@ -68,15 +68,15 @@ Use the [Hostinger VPS runbook](deploy/HOSTINGER.md) for Caddy and systemd, or t
 
 1. Use a Node.js 24 host with a persistent writable disk and one always-running app instance. A Hostinger VPS can host the app with HTTPS through a reverse proxy, or you can run it elsewhere and use Hostinger only for the domain. On another host, add a subdomain such as `register.yourdomain.com` in the host's dashboard and add its requested DNS record at Hostinger. Keep existing mail records. This server needs filesystem storage and a background worker.
 2. For the public app, configure `DEMO=0`, `RAZORPAY_TEST=0`, `PUBLIC_URL=https://register.yourdomain.com`, and an absolute `DATA_DIR` on the persistent disk. Use one app process per database. Terminate TLS at the proxy. Set `TRUST_LOOPBACK_PROXY=1` only when that proxy sets its own forwarding headers, as the supplied Caddy configuration does. Keep the database on private storage with backups.
-3. Configure the verified UPI details or the Razorpay credentials for your chosen payment mode. Set the mode before taking registrations and reconcile pending orders before changing modes. Add the verified sender in Resend and set `RESEND_API_KEY`, `MAIL_FROM` and `REPLY_TO=mams.microbemashup@gmail.com`. Generate named staff accounts into the private `STAFF_FILE`. Set `WHATSAPP_URL` if the existing invite is still valid. Keep credentials out of source.
+3. Configure the verified UPI details or the Razorpay credentials for your chosen payment mode. Set the mode before taking registrations and reconcile pending orders before changing modes. Authenticate the sending domain in Brevo, add the sender, and set `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` and `REPLY_TO=mams.microbemashup@gmail.com`. Generate named staff accounts into the private `STAFF_FILE`. Set `WHATSAPP_URL` if the existing invite is still valid. Keep credentials out of source.
 4. Enter all four confirmed fee values and set `PRICES_CONFIRMED=true`. Production startup requires the pricing, mail, payment and storage settings. Run `npm start` with a service manager that restarts the app after faults. Use live Razorpay keys only when ready to take real payments.
 5. Check `/healthz` through the public HTTPS proxy. Test privately from a phone before sharing the URL. Submit a payment reference, verify it from the admin dashboard, and check the real inbox for the ID and private workshop link. Repeat for a workshop and verify that the export shows both paid records. Test the three staff roles and check the mail allowance for opening-day traffic.
 
-See [Razorpay Payment Links](https://razorpay.com/docs/api/payments/payment-links/) and [Resend send-email API](https://resend.com/docs/api-reference/emails/send-email).
+See [Razorpay Payment Links](https://razorpay.com/docs/api/payments/payment-links/) and [Brevo send-email API](https://developers.brevo.com/reference/send-transac-email).
 
 ## Organizer operations
 
 - Run `npm run --silent export` on the host to export registrations and payment status as JSON. The export includes applicant contact and team details, so store it privately. Filter `product === 'summit' && state === 'paid'` for check-in.
-- Monitor Razorpay payment status and Resend delivery/limits. The site sends up to two summit emails and three workshop confirmations per attendee. At 500 registrations that is approximately **1,000 summit emails**, plus workshops. Choose a sender plan with sufficient opening-day volume.
+- Monitor payment status and Brevo delivery. Brevo Free allows 300 emails per day. Keep `MAIL_NOTICES=essential` to conserve credits for Basic Registration IDs, access recovery and corrections. The site queues mail after its rolling 24-hour allowance is used. Sending 500 IDs takes at least two days at that rate.
 - For manual payments, use the receiving account statement as the source for verification. The website accepts a UPI reference and does not collect screenshots.
-- Resend retries use a persistent idempotency key. Mail jobs outside its deduplication window stop and require checking the provider's delivery log before a resend. An expired or cancelled Razorpay link directs the attendee to the organizers.
+- Brevo retries reuse the same message key within its 30-minute deduplication window. Mail jobs outside its deduplication window stop and require checking the provider's delivery log before a resend. An expired or cancelled Razorpay link directs the attendee to the organizers.

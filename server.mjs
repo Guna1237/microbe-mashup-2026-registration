@@ -10,7 +10,7 @@ import { basicFee, basicRates, batches, events, workshops, states, activities, a
 import { createAdmin, installAdminSchema, previewPassword, rejectionReasons } from './admin.mjs';
 import { readStaff, previewStaff } from './staff.mjs';
 import { createBackup } from './ops.mjs';
-import { resendFailure } from './mail-policy.mjs';
+import { brevoFailure, brevoKey, dailyLimit, dayMs, retryWindowMs } from './mail-policy.mjs';
 
 const env = process.env;
 const demo = env.DEMO === '1';
@@ -36,6 +36,24 @@ const jobMode = env.JOB_MODE || 'inline';
 if (!['inline', 'cron'].includes(jobMode)) throw new Error('Use JOB_MODE=inline or JOB_MODE=cron.');
 const launchHold = env.LAUNCH_HOLD === '1';
 const mailPaused = launchHold || env.MAIL_PAUSED === '1';
+const mailNotices = env.MAIL_NOTICES || 'essential';
+if (!['essential', 'all'].includes(mailNotices)) throw new Error('Use MAIL_NOTICES=essential or MAIL_NOTICES=all.');
+const mailAll = mailNotices === 'all';
+const sender = (env.BREVO_SENDER_EMAIL || '').trim();
+const brevoConfigured = Boolean(env.BREVO_API_KEY && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sender));
+if (process.argv[2] === 'check-brevo') {
+  if (!brevoConfigured) throw new Error('Set BREVO_API_KEY and BREVO_SENDER_EMAIL.');
+  const response = await fetch('https://api.brevo.com/v3/senders', {
+    headers: { 'api-key': env.BREVO_API_KEY, accept: 'application/json' },
+    signal: AbortSignal.timeout(9000),
+  });
+  if (!response.ok) throw new Error('Brevo sender check failed with HTTP ' + response.status + '.');
+  const result = await response.json();
+  const active = result.senders?.some((entry) => entry.active === true && entry.email?.toLowerCase() === sender.toLowerCase());
+  if (!active) throw new Error('The configured sender is not active in Brevo.');
+  console.log('Brevo API key and active sender verified. No email was sent.');
+  process.exit(0);
+}
 const trustProxy = env.TRUST_LOOPBACK_PROXY === '1';
 const checkingRazorpay = process.argv[2] === 'check-razorpay';
 const expectedKeyPrefix = razorpayTest ? 'rzp_test_' : 'rzp_live_';
@@ -61,7 +79,7 @@ const productionUrl = configuredUrl && configuredUrl.protocol === 'https:' && co
 const persistentPath = Boolean(env.DATA_DIR && isAbsolute(env.DATA_DIR));
 const ready = demo || (razorpayTest && hasRazorpayKeys) || (env.PRICES_CONFIRMED === 'true' &&
   ['BASIC_FEE', 'IPC_FEE', 'ANTIBIOTIC_FEE', 'BEYOND_FEE'].every((key) => env[key]) &&
-  (launchHold || (env.RESEND_API_KEY && env.MAIL_FROM)) &&
+  (launchHold || brevoConfigured) &&
   productionUrl && persistentPath && paymentConfigured && staff.length);
 if (!ready && !exporting && !backup) {
   throw new Error('Configure the HTTPS domain, absolute data path, named staff accounts, payment and email, then confirm fees.');
@@ -125,6 +143,9 @@ db.exec(`
     SELECT ref, owner AS attendee FROM orders WHERE product='summit'
     UNION ALL SELECT ref, attendee FROM registration_members;
 `);
+if (!db.prepare('PRAGMA table_info(mail)').all().some(({ name }) => name === 'send_provider')) {
+  db.exec('ALTER TABLE mail ADD COLUMN send_provider TEXT');
+}
 installAdminSchema(db);
 if (preflight) {
   if (db.prepare('PRAGMA quick_check').get().quick_check !== 'ok') throw new Error('SQLite did not pass its quick check.');
@@ -203,6 +224,7 @@ function queue(order, template, subject, body, person = attendee(order.owner)) {
 }
 
 function acknowledge(order) {
+  if (!mailAll) return;
   queue(order, 'received', orderLabel(order.product) + ' received',
     'Your ' + orderLabel(order.product).toLowerCase() + ' request has been received.\n' +
     'Payment and status: ' + statusUrl(order) + '\n\n' +
@@ -239,6 +261,7 @@ function recordConfirmation(order) {
       }
       return;
     }
+    if (!mailAll) return;
     const booked = all('SELECT activity FROM activity_items WHERE ref=? ORDER BY activity', order.ref)
       .map(({ activity }) => activities.find(({ id }) => id === activity)?.name).filter(Boolean);
     queue(order, 'paid', label + ' confirmed',
@@ -277,7 +300,9 @@ function verifyManual(ref, rawUtr, rawAmount, actor) {
     if (order.state !== 'pending') throw new InputError('This order cannot be verified.');
     recordConfirmation(order);
     audit('payment-verified', order.ref, utr + ' · INR ' + amount, actor);
-    return 'Payment verified. The confirmation email has been queued.';
+    return order.product === 'summit' || mailAll
+      ? 'Payment verified. The confirmation email has been queued.'
+      : 'Payment verified. The activity booking status has been updated.';
   });
 }
 
@@ -349,38 +374,45 @@ async function refresh(order) {
 
 async function deliver(msg) {
   const now = Date.now();
-  // Resend deduplicates the same send key for 24 hours. Stop automatic retries before that window ends.
-  if (msg.first_attempt && now - msg.first_attempt >= 23 * 3600000) {
+  // Brevo deduplicates the same batch key for 30 minutes. Do not retry uncertain sends from another provider.
+  if (msg.first_attempt && (msg.send_provider !== 'brevo' || now - msg.first_attempt >= retryWindowMs)) {
     run('UPDATE mail SET error=?, next_attempt=? WHERE id=?',
       'Needs operator review before resend', Number.MAX_SAFE_INTEGER, msg.id);
     return;
   }
-  run('UPDATE mail SET first_attempt=COALESCE(first_attempt,?), next_attempt=? WHERE id=?',
+  run("UPDATE mail SET send_provider='brevo',first_attempt=COALESCE(first_attempt,?),next_attempt=? WHERE id=?",
     now, now + 60000, msg.id);
   if (local) {
     appendFileSync(join(dir, 'outbox.jsonl'), JSON.stringify({
       to: msg.recipient, subject: msg.subject, text: msg.body,
     }) + '\n');
   } else {
-    const result = await fetch('https://api.resend.com/emails', {
+    const result = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
       headers: {
-        authorization: 'Bearer ' + env.RESEND_API_KEY, 'content-type': 'application/json',
-        'idempotency-key': msg.id,
+        'api-key': env.BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json',
       },
       body: JSON.stringify({
-        from: env.MAIL_FROM, to: [msg.recipient], subject: msg.subject, text: msg.body,
-        reply_to: env.REPLY_TO || 'mams.microbemashup@gmail.com',
+        sender: { name: env.BREVO_SENDER_NAME || 'Microbe Mashup ’26', email: sender },
+        replyTo: { email: env.REPLY_TO || 'mams.microbemashup@gmail.com' },
+        subject: msg.subject, textContent: msg.body,
+        messageVersions: [{ to: [{ email: msg.recipient }] }],
+        headers: { idempotencyKey: brevoKey(msg.id, msg.first_attempt || now) },
       }),
       signal: AbortSignal.timeout(9000),
     });
     if (!result.ok) {
-      const provider = result.status === 429 ? await result.json().catch(() => null) : null;
-      const failure = resendFailure(result.status, provider?.name, result.headers.get('retry-after'), Date.now());
+      const provider = await result.json().catch(() => null);
+      if (msg.first_attempt && provider?.code === 'duplicate_parameter' && /idempotency/i.test(provider.message || '')) {
+        run('UPDATE mail SET sent=?,error=NULL WHERE id=?', Date.now(), msg.id);
+        return false;
+      }
+      const failure = brevoFailure(result.status, provider?.code, result.headers.get('retry-after') ||
+        result.headers.get('x-sib-ratelimit-reset'), Date.now());
       // An explicit rejection proves only this request was not sent. Preserve any earlier ambiguous attempt.
       run('UPDATE mail SET error=?, next_attempt=?, first_attempt=? WHERE id=?', failure.error, failure.retryAt,
         failure.definitivelyRejected && !msg.first_attempt ? null : msg.first_attempt || now, msg.id);
-      if (failure.pauseQueue) run(`INSERT INTO mail_provider(name,retry_at,reason) VALUES('resend',?,?)
+      if (failure.pauseQueue) run(`INSERT INTO mail_provider(name,retry_at,reason) VALUES('brevo',?,?)
         ON CONFLICT(name) DO UPDATE SET retry_at=excluded.retry_at,reason=excluded.reason`, failure.retryAt, failure.error);
       return failure.pauseQueue;
     }
@@ -411,11 +443,19 @@ async function work() {
         await Promise.allSettled(pending.slice(i, i + 5).map(refresh));
       }
     }
-    if (mailPaused || get("SELECT retry_at FROM mail_provider WHERE name='resend'")?.retry_at > Date.now()) return;
+    if (mailPaused || get("SELECT retry_at FROM mail_provider WHERE name='brevo'")?.retry_at > Date.now()) return;
     const messages = all(`SELECT * FROM mail WHERE sent IS NULL AND next_attempt <= ?
       ORDER BY CASE WHEN id LIKE '%/paid%' OR id LIKE '%-access-%' THEN 0 ELSE 1 END,rowid LIMIT 90`, Date.now());
     for (const msg of messages) {
       if (stopping || Date.now() >= deadline) return;
+      if (!local) {
+        const { count, oldest } = get('SELECT COUNT(*) AS count,MIN(sent) AS oldest FROM mail WHERE sent>?', Date.now() - dayMs);
+        if (count >= dailyLimit) {
+          run(`INSERT INTO mail_provider(name,retry_at,reason) VALUES('brevo',?,'Daily sending budget reached')
+            ON CONFLICT(name) DO UPDATE SET retry_at=excluded.retry_at,reason=excluded.reason`, oldest + dayMs + 1000);
+          return;
+        }
+      }
       try { if (await deliver(msg)) return; }
       catch {
         run('UPDATE mail SET error=? WHERE id=?', 'Email service request failed', msg.id);
@@ -720,7 +760,7 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
       return res.end(readFileSync(brochure));
     }
     if (method === 'GET' && pathname === '/api/catalog') {
-      return json(res, 200, { demo, razorpayTest, manual, basicFee, basicRates, batches, events, states, workshops,
+      return json(res, 200, { demo, razorpayTest, manual, mailAll, basicFee, basicRates, batches, events, states, workshops,
         hasBrochure: existsSync(brochure), activitiesOpen: isOpen('workshops'), summitOpen: isOpen('summit'), launchHold });
     }
     if (method === 'POST' && pathname === '/api/register') {
