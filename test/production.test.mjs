@@ -267,7 +267,7 @@ test('group passes issue individual IDs and activity checkout uses the correct i
   try {
     const env = { ...process.env, DEMO: '1', RAZORPAY_TEST: '0', PAYMENT_MODE: 'manual',
       JOB_MODE: 'cron', DEMO_DATA_DIR: root, STAFF_FILE: '', ADMIN_PASSWORD: '',
-      MAIL_PAUSED: '0', MAIL_NOTICES: 'essential', WHATSAPP_URL: '', LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '',
+      MAIL_PAUSED: '0', MAIL_NOTICES: 'essential', WHATSAPP_URL: 'https://chat.whatsapp.com/ExampleTestInvite', LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '',
     };
     const base = await boot(env, (fn) => { stop = fn; });
     const call = (token, cookie) => (path, status, body) => api(base, { token, cookie })(path, status, body, { origin: base });
@@ -290,6 +290,13 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     assert.equal(pending.partySize, 4);
     assert.equal(pending.participantId, null);
     assert.equal(pending.workshopToken, null);
+    run(['server.mjs', 'jobs:drain'], env);
+    const beforeVerification = readFileSync(join(root, 'outbox.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(beforeVerification.length, 1);
+    assert.equal(beforeVerification[0].to, four[0].email);
+    assert.match(beforeVerification[0].subject, /Basic Registration received/);
+    assert.match(beforeVerification[0].text, /#payment=/);
+    assert.doesNotMatch(JSON.stringify(beforeVerification), /MMSHP-|chat\.whatsapp\.com/);
     await guest('register/access', 200, { email: four[0].email });
     await guest('register/access', 200, { email: four[0].email });
     await guest('register/access', 200, { email: four[1].email });
@@ -298,7 +305,8 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     await owner('admin/verify', 200, { ref: receipt.orderReference, utr: receipt.utr, amount: 2880, matched: true });
     run(['server.mjs', 'jobs:drain'], env);
     const messages = readFileSync(join(root, 'outbox.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-    assert.equal(messages.some(({ subject }) => /registration received/i.test(subject)), false);
+    assert.equal(messages.filter(({ subject }) => /registration received/i.test(subject)).length, 1);
+    assert.doesNotMatch(JSON.stringify(messages), /chat\.whatsapp\.com/);
     const recovery = messages.filter(({ subject }) => subject.includes('Recover your Basic Registration'));
     assert.equal(recovery.length, 2);
     assert.ok(recovery.find(({ to }) => to === four[0].email).text.includes('#payment='));
@@ -353,6 +361,10 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     run(['server.mjs', 'jobs:drain'], env);
     const mail = readFileSync(join(root, 'outbox.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
     assert.equal(mail.filter(({ subject }) => subject.includes('Your Events & Workshops link')).length, 1);
+    const invites = mail.filter(({ text }) => text.includes(env.WHATSAPP_URL));
+    assert.equal(invites.length, 1);
+    assert.equal(invites[0].to, person.email);
+    assert.match(invites[0].subject, /Events & Workshops confirmed/);
   } finally {
     if (stop) await stop();
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));

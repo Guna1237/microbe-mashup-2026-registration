@@ -310,7 +310,7 @@ async function showPayment(token, version) {
         ? (order.partySize > 1 ? 'Each group member receives their own Registration ID and booking link by email.' : 'Keep your Registration ID to book Events & Workshops and check in at the summit.')
         : 'Your activity bookings are confirmed.') :
         pending ? (order.manual ? (order.reviewMessage ? 'Check the note from the organizers and review your payment details.' :
-          awaiting ? (order.product === 'summit' || catalog.mailAll ?
+          awaiting ? (order.product === 'summit' || catalog.activityConfirmationEmail ?
             'The organizers will check your payment and email you once it’s verified.' :
             'The organizers will check your payment. Reopen this page to see the result.') :
           'Pay the exact amount by UPI and enter the transaction reference from your banking app.') :

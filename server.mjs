@@ -92,6 +92,7 @@ const whatsapp = env.WHATSAPP_URL || '';
 if (whatsapp && !/^https:\/\/chat\.whatsapp\.com\/[\w-]+$/.test(whatsapp)) {
   throw new Error('WHATSAPP_URL must be an official WhatsApp invite URL.');
 }
+const activityConfirmationEmail = mailAll || Boolean(whatsapp);
 
 const dir = resolve(demo ? env.DEMO_DATA_DIR || 'demo-data' : razorpayTest ? 'razorpay-test-data' : env.DATA_DIR || 'data');
 if (preflight && local) throw new Error('Set DEMO=0 and RAZORPAY_TEST=0 to run the production preflight.');
@@ -218,13 +219,13 @@ const statusUrl = (order) => publicUrl + '/#payment=' + order.token;
 const invitation = (person) => publicUrl + '/activities#access=' + person.invite;
 function queue(order, template, subject, body, person = attendee(order.owner)) {
   run('INSERT OR IGNORE INTO mail (id,recipient,subject,body) VALUES (?,?,?,?)',
-    order.ref + '/' + template, person.email, "Microbe Mashup ’26 | " + subject + ' | ' + uid(person.seq),
+    order.ref + '/' + template, person.email, "Microbe Mashup ’26 | " + subject,
     'Hello ' + JSON.parse(person.details).name + ',\n\n' + body +
       '\n\nTeam Microbe Mashup ’26\nMamata Academy of Medical Sciences');
 }
 
 function acknowledge(order) {
-  if (!mailAll) return;
+  if (order.product !== 'summit' && !mailAll) return;
   queue(order, 'received', orderLabel(order.product) + ' received',
     'Your ' + orderLabel(order.product).toLowerCase() + ' request has been received.\n' +
     'Payment and status: ' + statusUrl(order) + '\n\n' +
@@ -257,16 +258,17 @@ function recordConfirmation(order) {
         queue(order, 'paid-' + person.seq, label + ' confirmed',
           'Your Basic Registration is confirmed.\nRegistration ID: ' + uid(person.seq) +
           '\n\nUse your Registration ID and this personal link to book Events & Workshops: ' + invitation(person) + '\n' +
-          (whatsapp ? '\nOfficial WhatsApp group: ' + whatsapp + '\n' : '') + guidelines, person);
+          guidelines, person);
       }
       return;
     }
-    if (!mailAll) return;
+    if (!activityConfirmationEmail) return;
     const booked = all('SELECT activity FROM activity_items WHERE ref=? ORDER BY activity', order.ref)
       .map(({ activity }) => activities.find(({ id }) => id === activity)?.name).filter(Boolean);
     queue(order, 'paid', label + ' confirmed',
       label + ' payment is confirmed.\nRegistration ID: ' + uid(order.owner) +
-      '\nAmount received: INR ' + order.amount / 100 + (booked.length ? '\nBooked: ' + booked.join(', ') + '\n' : '\n') + guidelines);
+      '\nAmount received: INR ' + order.amount / 100 + (booked.length ? '\nBooked: ' + booked.join(', ') + '\n' : '\n') +
+      (whatsapp ? '\nOfficial Events & Workshops WhatsApp group: ' + whatsapp + '\n' : '') + guidelines);
 }
 
 function normalizeUtr(value) {
@@ -300,7 +302,7 @@ function verifyManual(ref, rawUtr, rawAmount, actor) {
     if (order.state !== 'pending') throw new InputError('This order cannot be verified.');
     recordConfirmation(order);
     audit('payment-verified', order.ref, utr + ' · INR ' + amount, actor);
-    return order.product === 'summit' || mailAll
+    return order.product === 'summit' || activityConfirmationEmail
       ? 'Payment verified. The confirmation email has been queued.'
       : 'Payment verified. The activity booking status has been updated.';
   });
@@ -761,7 +763,7 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
       return res.end(readFileSync(brochure));
     }
     if (method === 'GET' && pathname === '/api/catalog') {
-      return json(res, 200, { demo, razorpayTest, manual, mailAll, basicFee, basicRates, batches, events, states, workshops,
+      return json(res, 200, { demo, razorpayTest, manual, activityConfirmationEmail, basicFee, basicRates, batches, events, states, workshops,
         hasBrochure: existsSync(brochure), activitiesOpen: isOpen('workshops'), summitOpen: isOpen('summit'), launchHold });
     }
     if (method === 'POST' && pathname === '/api/register') {
