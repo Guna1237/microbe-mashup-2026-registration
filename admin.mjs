@@ -269,7 +269,8 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
       }
       if (pathname === '/api/admin/mail') {
         if (!owner) return forbidden();
-        return json(res, 200, { entries: all(`SELECT id,recipient,subject,error,first_attempt,next_attempt
+        const provider = get("SELECT retry_at AS retryAt,reason FROM mail_provider WHERE name='resend' AND retry_at>?", Date.now());
+        return json(res, 200, { provider, entries: all(`SELECT id,recipient,subject,error,first_attempt,next_attempt
           FROM mail WHERE sent IS NULL ORDER BY error IS NULL, rowid LIMIT 50`) });
       }
       if (pathname === '/api/admin/export') {

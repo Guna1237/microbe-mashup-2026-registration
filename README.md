@@ -35,7 +35,7 @@ Run `npm test` to exercise 525 synthetic registrations, all three group rates, i
 - Pause or reopen Basic Registration and Events & Workshops independently. Existing orders can still be paid.
 - Open **Event & workshop roster** to see paid and awaiting-payment counts by activity. **View bookings** opens the filtered order list. Use **Summit check-in** to mark each group member separately.
 - **Owners** manage registration, payment reviews, check-in, the email queue, the private roster export and the activity log. **Payment reviewers** can review, approve and request corrections. **Check-in staff** see only paid summit attendees' names, IDs and check-in status. The log identifies the staff account behind each dashboard change.
-- Owners can retry recent failed mail sends. For older failures, check the mail provider's delivery log before sending again.
+- Owners can retry recent failed mail sends. The queue shows when Resend is rate- or quota-limited and waits for the provider reset. For older, ambiguous sends, check the provider's delivery log before sending again.
 - To add or rotate a staff account, run `npm run staff:create -- USER ROLE ABSOLUTE_STAFF_FILE`. To revoke an account, run `npm run staff:remove -- USER ABSOLUTE_STAFF_FILE`. Restart the service to apply changes and revoke existing sessions.
 
 ## Optional Razorpay checkout

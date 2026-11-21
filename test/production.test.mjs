@@ -8,6 +8,8 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
+import { pathToFileURL } from 'node:url';
+import { resendFailure } from '../mail-policy.mjs';
 
 const origin = 'https://register.example.test';
 const node = process.execPath;
@@ -16,6 +18,16 @@ const attendee = {
   city: 'Hyderabad', college: 'Test College', collegeCity: 'Hyderabad', pincode: '500090',
   meal: 'Veg', consent: true, events: [],
 };
+
+test('provider backoff respects UTC quota resets and rate-limit headers', () => {
+  const now = Date.UTC(2026, 10, 30, 22, 15);
+  const reset = Date.UTC(2026, 11, 1) + 30000;
+  assert.equal(resendFailure(429, 'daily_quota_exceeded', null, now).retryAt, reset);
+  assert.equal(resendFailure(429, 'monthly_quota_exceeded', null, now).retryAt, reset);
+  assert.equal(resendFailure(429, 'rate_limit_exceeded', '3', now).retryAt, now + 3000);
+  assert.ok(resendFailure(403, '', null, now).pauseQueue);
+  assert.equal(resendFailure(503, '', null, now).definitivelyRejected, false);
+});
 
 async function availablePort() {
   const socket = createServer().listen(0, '127.0.0.1');
@@ -69,6 +81,8 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
   const cleanup = [];
   try {
     const staffFile = join(root, 'staff.json');
+    const testQr = join(root, 'test-qr.png');
+    writeFileSync(testQr, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'));
     const accounts = {};
     for (const [user, role] of [['event-owner', 'owner'], ['reviewer', 'payments'], ['front-desk', 'checkin']]) {
       const result = run(['staff.mjs', 'create', user, role, staffFile]);
@@ -81,7 +95,7 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
       LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '', MASHUP_PUBLIC_URL: '',
       PRICES_CONFIRMED: 'true', STAFF_FILE: staffFile, PUBLIC_URL: origin, DATA_DIR: join(root, 'live'),
       BASIC_FEE: '800', IPC_FEE: '2500', ANTIBIOTIC_FEE: '2200', BEYOND_FEE: '4999',
-      PAYMENT_MODE: 'manual', MANUAL_UPI_ID: 'test@example', MANUAL_PAYEE: 'QA only', MANUAL_QR_FILE: '',
+      PAYMENT_MODE: 'manual', MANUAL_UPI_ID: 'test@example', MANUAL_PAYEE: 'QA only', MANUAL_QR_FILE: testQr,
       RESEND_API_KEY: 'unused-test-key', MAIL_FROM: 'Event Test <mail@example.test>', WHATSAPP_URL: '',
     };
     assert.throws(() => run(['server.mjs', 'preflight'], { ...env, PRICES_CONFIRMED: 'false' }));
@@ -128,7 +142,7 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     const { data: heldCatalog } = await holding('catalog', 200);
     assert.equal(heldCatalog.launchHold, true);
     assert.equal(heldCatalog.summitOpen, false);
-    assert.equal(heldCatalog.upiId, '');
+    assert.ok(!('upiId' in heldCatalog));
     await holding('register', 400, { ...attendee, email: 'hold@example.test' });
     const holdOwner = await signIn('event-owner', 'owner', hold);
     await holdOwner('admin/controls', 400, { name: 'summit', open: true });
@@ -145,8 +159,18 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
       assert.ok(rows.every((row) => row.data.token));
     }
     const person = api(base, { token: firstToken });
+    assert.ok(!('upiId' in (await guest('catalog', 200)).data));
+    assert.equal((await fetch(base + '/payment-qr')).status, 400);
+    const initialOrder = (await person('payment', 200)).data;
+    assert.equal(initialOrder.paymentDetails.upiId, 'test@example');
+    assert.equal(initialOrder.paymentDetails.hasQr, true);
+    const qr = await fetch(base + '/payment-qr', { headers: { authorization: 'Bearer ' + firstToken } });
+    assert.equal(qr.status, 200);
+    assert.deepEqual(Buffer.from(await qr.arrayBuffer()), readFileSync(testQr));
     const { data: manual } = await person('payment/reference', 200, { utr: '111122223333' });
     assert.equal(manual.state, 'pending');
+    assert.equal(manual.paymentDetails, null);
+    assert.equal((await fetch(base + '/payment-qr', { headers: { authorization: 'Bearer ' + firstToken } })).status, 404);
     assert.equal((await frontDesk('admin/orders?view=all', 200)).data.total, 0);
     const ref = manual.orderReference;
     const payment = { ref, utr: manual.utr, amount: 800, matched: true };
@@ -187,6 +211,23 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     const throttle = api(base, { ip: '192.0.2.10' });
     await Promise.all(Array.from({ length: 60 }, () => throttle('register', 400, {})));
     assert.equal((await throttle('register', 429, {})).headers.get('retry-after'), '60');
+
+    const providerMock = join(root, 'provider-mock.mjs');
+    const requestLog = join(root, 'provider-requests.log');
+    writeFileSync(providerMock, `import { appendFileSync } from 'node:fs';
+      globalThis.fetch = async (url) => {
+        if (url !== 'https://api.resend.com/emails') throw new Error('Unexpected network request');
+        appendFileSync(process.env.MOCK_REQUEST_LOG, 'attempt\\n');
+        return Response.json({ name: 'daily_quota_exceeded' }, { status: 429 });
+      };`);
+    const mockEnv = { ...env, MAIL_PAUSED: '0', MOCK_REQUEST_LOG: requestLog };
+    const worker = ['--import', pathToFileURL(providerMock).href, 'server.mjs', 'jobs:drain'];
+    run(worker, mockEnv);
+    run(worker, mockEnv);
+    assert.equal(readFileSync(requestLog, 'utf8'), 'attempt\n');
+    const outbox = (await owner('admin/mail', 200)).data;
+    assert.match(outbox.provider.reason, /daily quota/);
+    assert.equal(outbox.entries[0].first_attempt, null);
 
     const snapshot = join(root, 'backup.sqlite');
     assert.match(run(['server.mjs', 'backup', snapshot], env), /attendees: 525/);
@@ -239,10 +280,18 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     assert.equal(pending.partySize, 3);
     assert.equal(pending.participantId, null);
     assert.equal(pending.workshopToken, null);
+    await guest('register/access', 200, { email: trio[0].email });
+    await guest('register/access', 200, { email: trio[0].email });
+    await guest('register/access', 200, { email: trio[1].email });
+    await guest('register/access', 200, { email: 'unlisted@example.test' });
     const receipt = (await leaderPayment('payment/reference', 200, { utr: '333333444444' })).data;
     await owner('admin/verify', 200, { ref: receipt.orderReference, utr: receipt.utr, amount: 2250, matched: true });
     run(['server.mjs', 'jobs:drain'], env);
     const messages = readFileSync(join(root, 'outbox.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    const recovery = messages.filter(({ subject }) => subject.includes('Recover your Basic Registration'));
+    assert.equal(recovery.length, 2);
+    assert.ok(recovery.find(({ to }) => to === trio[0].email).text.includes('#payment='));
+    assert.ok(!recovery.find(({ to }) => to === trio[1].email).text.includes('#payment='));
     const confirmations = messages.filter(({ subject }) => subject.includes('confirmed'));
     assert.equal(confirmations.length, 3);
     const ids = confirmations.map((mail) => ({

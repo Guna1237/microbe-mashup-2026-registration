@@ -5,10 +5,12 @@ import { resolve, join, isAbsolute } from 'node:path';
 import { isIP } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { setTimeout as delay } from 'node:timers/promises';
 import { basicFee, basicRates, batches, events, workshops, states, activities, activitySelection, registration, emailAddress, InputError } from './event.mjs';
 import { createAdmin, installAdminSchema, previewPassword, rejectionReasons } from './admin.mjs';
 import { readStaff, previewStaff } from './staff.mjs';
 import { createBackup } from './ops.mjs';
+import { resendFailure } from './mail-policy.mjs';
 
 const env = process.env;
 const demo = env.DEMO === '1';
@@ -105,6 +107,9 @@ db.exec(`
   );
   CREATE TABLE IF NOT EXISTS job_leases (
     name TEXT PRIMARY KEY, worker TEXT NOT NULL, expires INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS mail_provider (
+    name TEXT PRIMARY KEY, retry_at INTEGER NOT NULL, reason TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS registration_members (
     ref TEXT NOT NULL REFERENCES orders(ref), attendee INTEGER NOT NULL UNIQUE REFERENCES attendees(seq),
@@ -370,9 +375,14 @@ async function deliver(msg) {
       signal: AbortSignal.timeout(9000),
     });
     if (!result.ok) {
-      const delay = result.status === 429 ? 15 * 60000 : 5 * 60000;
-      run('UPDATE mail SET error=?, next_attempt=? WHERE id=?', 'Resend response ' + result.status, now + delay, msg.id);
-      return;
+      const provider = result.status === 429 ? await result.json().catch(() => null) : null;
+      const failure = resendFailure(result.status, provider?.name, result.headers.get('retry-after'), Date.now());
+      // An explicit rejection proves only this request was not sent. Preserve any earlier ambiguous attempt.
+      run('UPDATE mail SET error=?, next_attempt=?, first_attempt=? WHERE id=?', failure.error, failure.retryAt,
+        failure.definitivelyRejected && !msg.first_attempt ? null : msg.first_attempt || now, msg.id);
+      if (failure.pauseQueue) run(`INSERT INTO mail_provider(name,retry_at,reason) VALUES('resend',?,?)
+        ON CONFLICT(name) DO UPDATE SET retry_at=excluded.retry_at,reason=excluded.reason`, failure.retryAt, failure.error);
+      return failure.pauseQueue;
     }
   }
   run('UPDATE mail SET sent=?, error=NULL WHERE id=?', Date.now(), msg.id);
@@ -401,16 +411,17 @@ async function work() {
         await Promise.allSettled(pending.slice(i, i + 5).map(refresh));
       }
     }
-    if (mailPaused) return;
+    if (mailPaused || get("SELECT retry_at FROM mail_provider WHERE name='resend'")?.retry_at > Date.now()) return;
     const messages = all(`SELECT * FROM mail WHERE sent IS NULL AND next_attempt <= ?
-      ORDER BY rowid LIMIT 90`, Date.now());
+      ORDER BY CASE WHEN id LIKE '%/paid%' OR id LIKE '%-access-%' THEN 0 ELSE 1 END,rowid LIMIT 90`, Date.now());
     for (const msg of messages) {
       if (stopping || Date.now() >= deadline) return;
-      try { await deliver(msg); }
+      try { if (await deliver(msg)) return; }
       catch {
         run('UPDATE mail SET error=? WHERE id=?', 'Email service request failed', msg.id);
         console.error('Email attempt failed for ' + msg.id);
       }
+      if (!local) await delay(150);
     }
   } finally {
     try { if (leased) run("DELETE FROM job_leases WHERE name='outbox' AND worker=?", worker); }
@@ -466,6 +477,9 @@ function summary(order) {
   const manualOrder = manual && !order.link_id;
   const basic = order.product === 'summit';
   const confirmedBasic = basic && order.state === 'paid';
+  const utr = manualOrder ? get('SELECT utr FROM manual_receipts WHERE ref=?', order.ref)?.utr ?? null : null;
+  const reviewMessage = manualOrder ? rejectionReasons[get('SELECT reason FROM payment_reviews WHERE ref=?', order.ref)?.reason] || null : null;
+  const payable = !launchHold && manualOrder && order.state === 'pending' && !utr && !reviewMessage;
   return {
     participantId: !basic || confirmedBasic ? uid(order.owner) : null, product: order.product, label: orderLabel(order.product),
     partySize: basic ? get('SELECT COUNT(*) AS count FROM summit_roster WHERE ref=?', order.ref).count : 1,
@@ -475,8 +489,8 @@ function summary(order) {
     token: order.token,
     manual: manualOrder,
     orderReference: manualOrder ? order.ref : null,
-    utr: manualOrder ? get('SELECT utr FROM manual_receipts WHERE ref=?', order.ref)?.utr ?? null : null,
-    reviewMessage: manualOrder ? rejectionReasons[get('SELECT reason FROM payment_reviews WHERE ref=?', order.ref)?.reason] || null : null,
+    utr, reviewMessage,
+    paymentDetails: payable ? { upiId, payee, hasQr: Boolean(qr) } : null,
     workshopToken: confirmedBasic ? attendee(order.owner).invite : null,
   };
 }
@@ -601,6 +615,23 @@ function sendActivityAccess(body) {
     'Registration ID: ' + id + '\n\nOpen your personal booking link: ' + invitation(person), person);
 }
 
+function sendRegistrationAccess(body) {
+  const email = emailAddress(body.email);
+  const person = get('SELECT * FROM attendees WHERE email=?', email);
+  if (!person) return;
+  const order = basicOrderFor(person.seq);
+  if (!order) return;
+  const template = 'registration-access-' + person.seq + '-' + Math.floor(Date.now() / (15 * 60000));
+  if (order.state === 'paid') {
+    queue(order, template, 'Recover your Basic Registration',
+      'Registration ID: ' + uid(person.seq) + '\n\nOpen Events & Workshops: ' + invitation(person), person);
+  } else if (order.state === 'pending') {
+    queue(order, template, 'Recover your Basic Registration',
+      order.owner === person.seq ? 'Open your private payment status: ' + statusUrl(order)
+        : 'Your group leader can check the group payment. Once it is verified, you will receive your own Registration ID.', person);
+  }
+}
+
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ...['/basic-registration', '/activities', '/brochure', '/location'].map((path) => [path, ['index.html', 'text/html; charset=utf-8']]),
@@ -618,12 +649,13 @@ const assets = new Map([
   ['/assets/summit/admin-script', ['admin.js', 'text/javascript; charset=utf-8']],
   ['/assets/summit/event-mark', ['event-logo-transparent.webp', 'image/webp']],
   ['/assets/summit/college-mark', ['college-logo.webp', 'image/webp']],
+  ['/assets/summit/college-crest', ['college-logo-transparent.webp', 'image/webp']],
 ]);
 const headers = {
   'cache-control': 'no-store',
   'referrer-policy': 'no-referrer',
   'x-content-type-options': 'nosniff',
-  'content-security-policy': "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; frame-src https://maps.google.com https://www.google.com",
+  'content-security-policy': "default-src 'self'; img-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; frame-src https://maps.google.com https://www.google.com",
 };
 const brochure = new URL('./public/summit-brochure.pdf', import.meta.url);
 function clientIp(req) {
@@ -677,7 +709,9 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
       res.writeHead(200, { 'content-type': type });
       return res.end(readFileSync(new URL('./public/' + file, import.meta.url)));
     }
-    if (method === 'GET' && ['/payment-qr', '/payment-qr.png'].includes(pathname) && qr && !launchHold) {
+    if (method === 'GET' && ['/payment-qr', '/payment-qr.png'].includes(pathname)) {
+      const payment = summary(authorizedOrder(req));
+      if (!payment.paymentDetails?.hasQr) return json(res, 404, { error: 'This payment does not have a QR code.' });
       res.writeHead(200, { 'content-type': 'image/png' });
       return res.end(qr);
     }
@@ -686,8 +720,7 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
       return res.end(readFileSync(brochure));
     }
     if (method === 'GET' && pathname === '/api/catalog') {
-      return json(res, 200, { demo, razorpayTest, manual, upiId: launchHold ? '' : upiId, payee: launchHold ? '' : payee,
-        hasQr: Boolean(qr) && !launchHold, basicFee, basicRates, batches, events, states, workshops,
+      return json(res, 200, { demo, razorpayTest, manual, basicFee, basicRates, batches, events, states, workshops,
         hasBrochure: existsSync(brochure), activitiesOpen: isOpen('workshops'), summitOpen: isOpen('summit'), launchHold });
     }
     if (method === 'POST' && pathname === '/api/register') {
@@ -702,6 +735,11 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
     if (method === 'POST' && pathname === '/api/activities/access') {
       if (!allowRegistration(req)) return json(res, 429, { error: 'Too many attempts. Try again in one minute.' });
       sendActivityAccess(await read(req));
+      return json(res, 200, { ok: true });
+    }
+    if (method === 'POST' && pathname === '/api/register/access') {
+      if (!allowRegistration(req)) return json(res, 429, { error: 'Too many attempts. Try again in one minute.' });
+      sendRegistrationAccess(await read(req));
       return json(res, 200, { ok: true });
     }
     if (method === 'POST' && pathname === '/api/activities/unlock') {

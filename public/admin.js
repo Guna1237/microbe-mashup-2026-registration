@@ -193,8 +193,12 @@ async function refreshView() {
     byId('next').disabled = page >= result.pages;
     return;
   }
-  const { entries } = await api(tab);
+  const { entries, provider } = await api(tab);
   if (id !== ticket) return;
+  if (tab === 'mail') {
+    setMessage('mail-provider-status', provider ? provider.reason + '. The next provider retry is after ' +
+      time.format(provider.retryAt) + ' IST.' : '');
+  }
   const container = byId(tab + '-list');
   if (!entries.length) return empty(container, tab === 'mail' ? 'No queued emails.' : 'No organizer actions yet.');
   container.replaceChildren(...entries.map((entry) => {

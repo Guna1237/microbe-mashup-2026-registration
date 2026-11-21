@@ -49,14 +49,29 @@ function bind(form, version, handler) {
   });
 }
 
+function showBasicRecovery(version) {
+  show(title('Find your Basic Registration') + `
+    <p class="intro">Enter the email address used for your registration. We’ll send your payment link or confirmed Registration ID to that address.</p>
+    <form id="basic-recovery">${input('email', 'Registered email address', 'type="email" maxlength="254" autocomplete="email"')}
+      <div class="actions"><button type="submit">Email my registration</button>
+        <a class="button secondary" href="/basic-registration">Back to Basic Registration</a></div>
+    </form>`);
+  bind(document.querySelector('#basic-recovery'), version, async (form) => {
+    await api('register/access', { method: 'POST', body: Object.fromEntries(new FormData(form)) });
+    if (version === generation) message('If this address matches a registration, check your inbox for a message from the summit.');
+  });
+}
+
 function showBasic(version) {
   if (!catalog.summitOpen) {
     show(title(catalog.launchHold ? 'Registration opens soon' : 'Basic Registration is paused') +
-      '<p class="intro">Check back here when registration opens. Please wait to pay until you receive payment instructions from the site.</p>');
+      '<p class="intro">Check back here when registration opens. Please wait to pay until you receive payment instructions from the site.</p>' +
+      (catalog.launchHold ? '' : '<a href="#recover">Find an existing registration</a>'));
     return;
   }
   show(title('Basic Registration') + `
     <p class="intro">Get your summit pass first. After payment is verified, we’ll email each participant their own Registration ID.</p>
+    <p class="hint"><a href="#recover">Already registered? Find your payment link or Registration ID.</a></p>
     <form id="basic-form" novalidate>
       <section id="basic-details">
         ${select('size', 'Registration type', [
@@ -362,7 +377,6 @@ function showManualPayment(order, actions, token, version, render) {
   panel.className = 'card manual-payment';
   panel.innerHTML = `
     <p id="manual-payee" hidden></p>
-    ${catalog.hasQr && !order.utr && !order.reviewMessage ? '<img class="payment-qr" src="/payment-qr" alt="Scan to pay the event organizers by UPI">' : ''}
     <p class="hint" id="manual-order"></p>
     <form id="reference-form">
       <label class="field"><span>UPI transaction reference / UTR</span>
@@ -378,8 +392,9 @@ function showManualPayment(order, actions, token, version, render) {
     panel.before(note);
   }
   const payee = panel.querySelector('#manual-payee');
-  if (catalog.upiId && !order.utr && !order.reviewMessage) {
-    payee.textContent = catalog.payee + ' · UPI ID ' + catalog.upiId;
+  if (order.paymentDetails?.upiId) {
+    const { upiId, payee: recipient, hasQr } = order.paymentDetails;
+    payee.textContent = recipient + ' · UPI ID ' + upiId;
     payee.hidden = false;
     if (navigator.clipboard) {
       const copy = document.createElement('button');
@@ -388,9 +403,25 @@ function showManualPayment(order, actions, token, version, render) {
       copy.textContent = 'Copy UPI ID';
       payee.after(copy);
       copy.addEventListener('click', async () => {
-        try { await navigator.clipboard.writeText(catalog.upiId); message('UPI ID copied.'); }
+        try { await navigator.clipboard.writeText(upiId); message('UPI ID copied.'); }
         catch { message('Copy the UPI ID shown above.'); }
       });
+    }
+    if (hasQr) {
+      fetch('/payment-qr', { headers: { authorization: 'Bearer ' + token } })
+        .then((response) => response.ok ? response.blob() : null)
+        .then((blob) => {
+          if (!blob || version !== generation || !panel.isConnected) return;
+          const image = document.createElement('img');
+          const url = URL.createObjectURL(blob);
+          const release = () => URL.revokeObjectURL(url);
+          image.addEventListener('load', release, { once: true });
+          image.addEventListener('error', release, { once: true });
+          image.className = 'payment-qr';
+          image.alt = 'Scan to pay the event organizers by UPI';
+          image.src = url;
+          panel.querySelector('#manual-order').before(image);
+        }).catch(() => { /* The UPI ID remains visible if the QR cannot load. */ });
     }
   }
   panel.querySelector('#manual-order').textContent = 'Order reference ' + order.orderReference;
@@ -444,7 +475,10 @@ async function route() {
   document.title = page + ' · Microbe Mashup ’26';
   try {
     if (payment) await showPayment(token, version);
-    else if (path === '/basic-registration') showBasic(version);
+    else if (path === '/basic-registration') {
+      if (kind === 'recover' && !catalog.launchHold) showBasicRecovery(version);
+      else showBasic(version);
+    }
     else if (path === '/activities') {
       if (catalog.launchHold && !token) show(title('Events &amp; Workshops') +
         '<p class="intro">Activity booking opens after Basic Registration launches. Your confirmed Basic Registration email will contain your personal booking link.</p>');
