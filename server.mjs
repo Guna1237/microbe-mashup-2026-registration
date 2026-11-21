@@ -6,7 +6,7 @@ import { isIP } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
-import { basicFee, basicRates, batches, events, workshops, states, activities, activitySelection, registration, emailAddress, InputError } from './event.mjs';
+import { basicFee, basicRates, batches, events, workshops, states, activities, activitySelection, registration, emailAddress, normalizeRegistrationId, InputError } from './event.mjs';
 import { createAdmin, installAdminSchema, previewPassword, rejectionReasons } from './admin.mjs';
 import { readStaff, previewStaff } from './staff.mjs';
 import { createBackup } from './ops.mjs';
@@ -197,7 +197,7 @@ function atomic(fn) {
   }
 }
 
-function uid(seq) { return 'MMSPH-' + String(seq).padStart(3, '0'); }
+function uid(seq) { return 'MMSHP-' + String(seq).padStart(3, '0'); }
 function secret() { return randomBytes(24).toString('base64url'); }
 function orderFor(seq, product) { return get('SELECT * FROM orders WHERE owner=? AND product=?', seq, product); }
 function attendee(seq) { return get('SELECT * FROM attendees WHERE seq=?', seq); }
@@ -542,11 +542,12 @@ function importPaid(file, sendInvites) {
   return atomic(() => {
     let imported = 0;
     for (const row of rows) {
-      const rawId = /^MMSPH-(\d{3,8})$/.exec(row.attendeeId || '');
+      const id = normalizeRegistrationId(row.attendeeId);
+      const rawId = /^MMSHP-(\d{3,8})$/.exec(id);
       const seq = Number(rawId?.[1]);
       const email = emailAddress(row.email);
       const name = typeof row.name === 'string' ? row.name.trim().toUpperCase() : '';
-      if (!Number.isSafeInteger(seq) || seq < 1 || uid(seq) !== row.attendeeId || !name ||
+      if (!Number.isSafeInteger(seq) || seq < 1 || uid(seq) !== id || !name ||
           name.length > 120 || /[\u0000-\u001f\u007f]/.test(name) ||
           !Number.isSafeInteger(row.amountPaise) || row.amountPaise < 1 || !batches.some(({ id }) => id === row.batch)) {
         throw new Error('Each row needs the original attendee ID, name, email, batch and verified amount in paise.');
@@ -602,7 +603,7 @@ function begin(body) {
 
 function activityAttendee(req, registrationId) {
   const person = authorizedAttendee(req);
-  if (typeof registrationId !== 'string' || registrationId.trim().toUpperCase() !== uid(person.seq)) {
+  if (normalizeRegistrationId(registrationId) !== uid(person.seq)) {
     throw new InputError('Enter the Registration ID from the email that contains this link.');
   }
   return person;
@@ -646,8 +647,8 @@ function beginActivities(req, body) {
 
 function sendActivityAccess(body) {
   const email = emailAddress(body.email);
-  const id = typeof body.registrationId === 'string' ? body.registrationId.trim().toUpperCase() : '';
-  const person = /^MMSPH-\d{3,8}$/.test(id) && get('SELECT * FROM attendees WHERE email=?', email);
+  const id = normalizeRegistrationId(body.registrationId);
+  const person = /^MMSHP-\d{3,8}$/.test(id) && get('SELECT * FROM attendees WHERE email=?', email);
   if (!person || uid(person.seq) !== id) return;
   const order = basicOrderFor(person.seq);
   if (order?.state !== 'paid') return;

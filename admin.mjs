@@ -1,6 +1,6 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { InputError, activities } from './event.mjs';
+import { InputError, activities, normalizeRegistrationId } from './event.mjs';
 import { retryWindowMs } from './mail-policy.mjs';
 
 export const previewPassword = 'mashup-local-preview-only';
@@ -129,7 +129,7 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
   }
 
   function queue(url, role) {
-    const q = (url.searchParams.get('q') || '').trim().slice(0, 100).toLowerCase();
+    const q = (url.searchParams.get('q') || '').trim().slice(0, 100).toLowerCase().replace(/^mmsph-/, 'mmshp-');
     const checkin = role === 'checkin';
     const view = checkin ? 'check-in' : url.searchParams.get('view') || 'review';
     const knownViews = new Map([
@@ -148,10 +148,10 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
     const groupSearch = roster ? '' : ` OR EXISTS (
       SELECT 1 FROM registration_members g JOIN attendees m ON m.seq=g.attendee
       WHERE g.ref=o.ref AND (instr(lower(m.email),?) OR instr(lower(json_extract(m.details,'$.name')),?)
-        OR instr(lower(printf('MMSPH-%03d',m.seq)),?)))`;
+        OR instr(lower(printf('MMSHP-%03d',m.seq)),?)))`;
     const where = ' WHERE ' + knownViews.get(view) + `
       AND (?='' OR instr(lower(json_extract(a.details,'$.name')),?)
-      OR instr(lower(printf('MMSPH-%03d', a.seq)),?)` + extra + groupSearch + ')' +
+      OR instr(lower(printf('MMSHP-%03d', a.seq)),?)` + extra + groupSearch + ')' +
       (activity ? ' AND (o.product=? OR EXISTS (SELECT 1 FROM activity_items b WHERE b.ref=o.ref AND b.activity=?))' : '');
     const params = Array(checkin ? 3 : roster ? 6 : 9).fill(q);
     if (activity) params.push(activity, activity);
@@ -187,10 +187,11 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
 
   function checkIn(body, actor) {
     if (typeof body.ref !== 'string' || typeof body.checkedIn !== 'boolean') throw new InputError('Choose a check-in action.');
+    const id = typeof body.attendeeId === 'string' ? normalizeRegistrationId(body.attendeeId) : null;
     return atomic(() => {
       const order = get(`SELECT s.attendee AS owner FROM summit_roster s JOIN orders o ON o.ref=s.ref
-        WHERE s.ref=? AND o.state='paid' AND ((? IS NULL AND s.attendee=o.owner) OR printf('MMSPH-%03d',s.attendee)=?)`,
-        body.ref, typeof body.attendeeId === 'string' ? body.attendeeId : null, typeof body.attendeeId === 'string' ? body.attendeeId : null);
+        WHERE s.ref=? AND o.state='paid' AND ((? IS NULL AND s.attendee=o.owner) OR printf('MMSHP-%03d',s.attendee)=?)`,
+        body.ref, id, id);
       if (!order) throw new InputError('Only verified summit attendees can be checked in.');
       const result = body.checkedIn
         ? run('INSERT OR IGNORE INTO check_ins(attendee,checked_in_at) VALUES (?,?)', order.owner, Date.now())

@@ -2,7 +2,7 @@
 
 Two forms on one website for the 11–12 December 2026 student summit hosted by the Department of Microbiology at Mamata Academy of Medical Sciences.
 
-- **Basic Registration** is mandatory. Individuals pay ₹800. Groups of four pay ₹720 per person (₹2,880 total). One leader submits the group details and pays once. After verification, every member receives their own `MMSPH-###` ID and private booking link.
+- **Basic Registration** is mandatory. Individuals pay ₹800. Groups of four pay ₹720 per person (₹2,880 total). One leader submits the group details and pays once. After verification, every member receives their own `MMSHP-###` ID and private booking link.
 - **Events & Workshops** verifies the attendee’s private link and their own Registration ID. Eligible attendees can choose events, including the three-person Microbe Mayhem competition, and workshops. Selected activities share one checkout, with duplicate activity bookings prevented.
 - **Payments** use organizer-verified UPI by default. Attendees enter their UPI reference, and organizers approve only after matching the settled payment against the receiving account. Razorpay is available as an optional alternative.
 - **Email** uses Brevo with a persistent queue. Each verified Basic Registration gets an individual ID, private booking link, and any configured WhatsApp invite. Payment corrections and access recovery go by email. Attendees can bookmark their payment page to check status. `MAIL_NOTICES=all` also sends receipt and activity confirmation emails.
@@ -13,7 +13,7 @@ Place the official Summit Brochure at `public/summit-brochure.pdf` and redeploy.
 
 Install Node.js 24 or later. Copy `.env.example` to `.env` and run `npm start`. Open `http://127.0.0.1:8108` and use a made-up transaction reference. Sign into `http://127.0.0.1:8108/admin` with the username `organizer` and preview passphrase `mashup-local-preview-only`. Demo mail is written to `demo-data/outbox.jsonl`. Demo mode binds to loopback and uses a different database from production. Production requires a separate staff file.
 
-Run `npm test` to exercise 525 synthetic registrations, all three group rates, individual ID delivery and booking access, staff permissions, payment verification, check-in, and SQLite backup and restore. Tests use temporary data and either pause email or send it to a local outbox.
+Run `npm test` to exercise 525 synthetic registrations, individual and group pricing, individual ID delivery and booking access, staff permissions, payment verification, check-in, and SQLite backup and restore. Tests use temporary data and either pause email or send it to a local outbox.
 
 ## Manual UPI payment and verification
 

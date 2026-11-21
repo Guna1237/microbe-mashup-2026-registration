@@ -10,6 +10,10 @@ function fee(name, fallback) {
 export const basicFee = fee('BASIC_FEE', 800);
 export const basicRates = { 1: basicFee, 4: 720 };
 
+export function normalizeRegistrationId(value) {
+  return typeof value === 'string' ? value.trim().toUpperCase().replace(/^MMSPH-/, 'MMSHP-') : '';
+}
+
 export const batches = [
   { id: 'mbbs24', name: '2k24 MBBS', competition: true },
   { id: 'mbbs25', name: '2k25 MBBS', competition: true },

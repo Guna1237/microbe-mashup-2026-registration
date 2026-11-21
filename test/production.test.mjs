@@ -306,7 +306,7 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     const confirmations = messages.filter(({ subject }) => subject.includes('confirmed'));
     assert.equal(confirmations.length, 4);
     const ids = confirmations.map((mail) => ({
-      id: /Registration ID: (MMSPH-\d+)/.exec(mail.text)[1],
+      id: /Registration ID: (MMSHP-\d+)/.exec(mail.text)[1],
       token: /#access=([A-Za-z0-9_-]+)/.exec(mail.text)[1],
       email: mail.to,
     }));
@@ -316,7 +316,9 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     const member = ids.find(({ email }) => email === four[1].email);
     await guest('activities/unlock', 400, { registrationId: person.id });
     await call(person.token)('activities/unlock', 400, { registrationId: member.id });
+    const priorId = member.id.replace('MMSHP-', 'MMSPH-');
     await call(member.token)('activities/unlock', 200, { registrationId: member.id });
+    await call(member.token)('activities/unlock', 200, { registrationId: priorId });
     for (const [index, expectedBatch] of ['bds24', 'final', 'pg'].entries()) {
       const { id, token } = ids.find(({ email }) => email === four[index + 1].email);
       const participant = call(token);
@@ -337,16 +339,16 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     const activityReceipt = (await paidActivities('payment/reference', 200, { utr: '888888444444' })).data;
     assert.equal(activityReceipt.amount, 2750);
     await owner('admin/verify', 200, { ref: activityReceipt.orderReference, utr: activityReceipt.utr, amount: 2750, matched: true });
-    const checkin = (await owner('admin/orders?view=check-in&q=' + member.id, 200)).data.rows;
+    const checkin = (await owner('admin/orders?view=check-in&q=' + priorId, 200)).data.rows;
     assert.equal(checkin[0].attendeeId, member.id);
-    await owner('admin/check-in', 200, { ref: receipt.orderReference, attendeeId: member.id, checkedIn: true });
+    await owner('admin/check-in', 200, { ref: receipt.orderReference, attendeeId: priorId, checkedIn: true });
     const report = (await owner('admin/activity-summary', 200)).data.entries;
     assert.equal(report.find(({ id }) => id === 'ipc').paid, 1);
     assert.equal(report.find(({ id }) => id === 'quiz').paid, 1);
     const checkinRows = (await owner('admin/orders?view=check-in', 200)).data.rows;
     assert.equal(checkinRows.length, 4);
     assert.equal(checkinRows.filter(({ checkedInAt }) => checkedInAt).length, 1);
-    await guest('activities/access', 200, { registrationId: person.id, email: person.email });
+    await guest('activities/access', 200, { registrationId: person.id.replace('MMSHP-', 'MMSPH-'), email: person.email });
     await guest('activities/access', 200, { registrationId: person.id, email: person.email });
     run(['server.mjs', 'jobs:drain'], env);
     const mail = readFileSync(join(root, 'outbox.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);

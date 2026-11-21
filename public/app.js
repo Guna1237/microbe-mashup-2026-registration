@@ -34,7 +34,7 @@ function select(name, label, options) {
     options.map(({ id, name }) => '<option value="' + id + '">' + name + '</option>').join('') + '</select></label>';
 }
 const values = (items) => items.map((name) => ({ id: name, name }));
-const registrationId = () => input('registrationId', 'Registration ID', 'placeholder="MMSPH-001" maxlength="14" autocomplete="off" autocapitalize="characters"');
+const registrationId = () => input('registrationId', 'Registration ID', 'placeholder="MMSHP-001" maxlength="14" autocomplete="off" autocapitalize="characters"');
 
 function bind(form, version, handler) {
   const button = form.querySelector('[type=submit]');
