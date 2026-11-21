@@ -89,6 +89,14 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     assert.match(run(['server.mjs', 'preflight'], env), /Production settings and SQLite verified/);
     const base = await boot(env, (fn) => cleanup.push(fn));
     const guest = api(base);
+    const publicRoutes = ['/basic-registration', '/activities', '/location', '/brochure'];
+    for (const route of publicRoutes) assert.match(await (await fetch(base + route)).text(), /Registration Guidelines/);
+    for (const [asset, type] of [['site-css', 'text/css'], ['registration-script', 'text/javascript'], ['event-mark', 'image/webp']]) {
+      const response = await fetch(base + '/assets/summit/' + asset);
+      assert.equal(response.status, 200);
+      assert.ok(response.headers.get('content-type').startsWith(type));
+      await response.arrayBuffer();
+    }
 
     async function signIn(user, expectedRole, target = base) {
       const { headers } = await api(target)('admin/login', 200, { user, password: accounts[user] });

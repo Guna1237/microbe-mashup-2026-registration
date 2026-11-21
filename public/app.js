@@ -255,7 +255,7 @@ function showActivitySelection(id, state, version) {
 function showInfo(path) {
   if (path === '/brochure') {
     show(title('Summit Brochure') + '<p class="intro">Microbe Mashup ’26 · 11–12 December 2026</p>' +
-      (catalog.hasBrochure ? '<a class="button" href="/summit-brochure.pdf" target="_blank" rel="noopener">Open brochure PDF</a>' :
+      (catalog.hasBrochure ? '<a class="button" href="/brochure-document" target="_blank" rel="noopener">Open brochure PDF</a>' :
         '<p>The official summit brochure will be added here when it’s available.</p>'));
     return;
   }
@@ -362,7 +362,7 @@ function showManualPayment(order, actions, token, version, render) {
   panel.className = 'card manual-payment';
   panel.innerHTML = `
     <p id="manual-payee" hidden></p>
-    ${catalog.hasQr && !order.utr && !order.reviewMessage ? '<img class="payment-qr" src="/payment-qr.png" alt="Scan to pay the event organizers by UPI">' : ''}
+    ${catalog.hasQr && !order.utr && !order.reviewMessage ? '<img class="payment-qr" src="/payment-qr" alt="Scan to pay the event organizers by UPI">' : ''}
     <p class="hint" id="manual-order"></p>
     <form id="reference-form">
       <label class="field"><span>UPI transaction reference / UTR</span>

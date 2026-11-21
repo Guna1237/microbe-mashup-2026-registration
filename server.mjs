@@ -612,6 +612,12 @@ const assets = new Map([
   ['/event-logo.webp', ['event-logo.webp', 'image/webp']],
   ['/event-logo-transparent.webp', ['event-logo-transparent.webp', 'image/webp']],
   ['/college-logo.webp', ['college-logo.webp', 'image/webp']],
+  ['/assets/summit/site-css', ['site.css', 'text/css; charset=utf-8']],
+  ['/assets/summit/registration-script', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/assets/summit/admin-css', ['admin.css', 'text/css; charset=utf-8']],
+  ['/assets/summit/admin-script', ['admin.js', 'text/javascript; charset=utf-8']],
+  ['/assets/summit/event-mark', ['event-logo-transparent.webp', 'image/webp']],
+  ['/assets/summit/college-mark', ['college-logo.webp', 'image/webp']],
 ]);
 const headers = {
   'cache-control': 'no-store',
@@ -671,11 +677,11 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
       res.writeHead(200, { 'content-type': type });
       return res.end(readFileSync(new URL('./public/' + file, import.meta.url)));
     }
-    if (method === 'GET' && pathname === '/payment-qr.png' && qr && !launchHold) {
+    if (method === 'GET' && ['/payment-qr', '/payment-qr.png'].includes(pathname) && qr && !launchHold) {
       res.writeHead(200, { 'content-type': 'image/png' });
       return res.end(qr);
     }
-    if (method === 'GET' && pathname === '/summit-brochure.pdf' && existsSync(brochure)) {
+    if (method === 'GET' && ['/brochure-document', '/summit-brochure.pdf'].includes(pathname) && existsSync(brochure)) {
       res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': 'inline; filename="summit-brochure.pdf"' });
       return res.end(readFileSync(brochure));
     }
