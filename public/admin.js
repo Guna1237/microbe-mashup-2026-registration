@@ -269,6 +269,19 @@ function reviewPayment(order, reject, initialReason = '') {
   comparison.append(amount, reference);
   const selections = order.selections?.length ? node('p', order.selections.map(({ name }) => name).join(', '), 'hint') : null;
   fields.replaceChildren(comparison);
+  if (order.hasProof) {
+    const proof = node('a', 'Open full screenshot');
+    proof.href = '/api/admin/payment-proof?ref=' + encodeURIComponent(order.ref);
+    proof.target = '_blank';
+    proof.rel = 'noopener noreferrer';
+    const image = node('img');
+    image.src = proof.href;
+    image.alt = 'Screenshot uploaded as proof of payment';
+    image.className = 'review-proof';
+    fields.append(image, proof);
+  } else {
+    fields.append(node('p', 'No screenshot was attached. Compare the transaction with the credit in your bank app.', 'hint'));
+  }
   if (selections) fields.append(selections);
   if (reject) {
     const label = node('label', 'Why does the payment need correction?', 'field');
@@ -339,7 +352,7 @@ byId('review-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const { order, reject } = paymentAction;
-  const body = { ref: order.ref, utr: order.utr };
+  const body = { ref: order.ref, utr: order.utr, submittedAt: order.submittedAt };
   if (reject) body.reason = form.elements.reason.value;
   else { body.amount = order.amount; body.matched = form.elements.matched.checked; }
   withButton(byId('review-submit'), async () => {

@@ -51,14 +51,14 @@ function bind(form, version, handler) {
 
 function showBasicRecovery(version) {
   show(title('Find your Basic Registration') + `
-    <p class="intro">Enter the email address used for your registration. We’ll send your payment link or confirmed Registration ID to that address.</p>
+    <p class="intro">Enter the email address used for your registration. We’ll email your Registration ID if your Basic Registration payment has been verified. If payment is pending, use your original payment page or contact the organizers.</p>
     <form id="basic-recovery">${input('email', 'Registered email address', 'type="email" maxlength="254" autocomplete="email"')}
       <div class="actions"><button type="submit">Email my registration</button>
         <a class="button secondary" href="/basic-registration">Back to Basic Registration</a></div>
     </form>`);
   bind(document.querySelector('#basic-recovery'), version, async (form) => {
     await api('register/access', { method: 'POST', body: Object.fromEntries(new FormData(form)) });
-    if (version === generation) message('If this address matches a registration, check your inbox for a message from the summit.');
+    if (version === generation) message('If this address matches a verified registration, check your inbox for your Registration ID.');
   });
 }
 
@@ -299,7 +299,7 @@ async function showPayment(token, version) {
     const awaiting = pending && order.manual && order.utr;
     const activityNames = [...catalog.events, ...catalog.workshops]
       .filter((item) => order.items.includes(item.id)).map(({ name }) => name);
-    show(title(paid ? 'Payment confirmed' : order.reviewMessage ? 'Payment reference needs attention' : awaiting ? 'Awaiting payment verification' :
+    show(title(paid ? 'Payment confirmed' : order.reviewMessage ? 'Payment reference needs attention' : awaiting || (pending && order.product === 'summit' && order.manual) ? 'Registration received' :
       pending ? 'Complete your payment' : 'Payment link ' + order.state) +
       '<p class="intro">' + order.label + ' · ' + money(order.amount) + '</p>' +
       (order.partySize > 1 ? '<p class="hint">' + order.partySize + ' participants covered by this payment.</p>' : '') +
@@ -311,9 +311,9 @@ async function showPayment(token, version) {
         : 'Your activity bookings are confirmed.') :
         pending ? (order.manual ? (order.reviewMessage ? 'Check the note from the organizers and review your payment details.' :
           awaiting ? (order.product === 'summit' || catalog.activityConfirmationEmail ?
-            'The organizers will check your payment and email you once it’s verified.' :
-            'The organizers will check your payment. Reopen this page to see the result.') :
-          'Pay the exact amount by UPI and enter the transaction reference from your banking app.') :
+            'Payment verification pending. Bookmark this page to check your status. We’ll email you after verification.' :
+            'Payment verification pending. Bookmark this page to check your status.') :
+          'Pay the exact amount by UPI, then submit the transaction reference and screenshot for verification.') :
           catalog.demo ? 'Simulate a successful payment to preview confirmation.' :
           'Pay on Razorpay, then return here to check the status.') :
           'Contact the organizers to arrange a new payment link.') + '</p><div class="actions"></div>');
@@ -388,6 +388,10 @@ function showManualPayment(order, actions, token, version, render) {
       <label class="field"><span>UPI transaction reference / UTR</span>
         <input name="utr" required maxlength="30" autocomplete="off" spellcheck="false">
       </label>
+      <label class="field"><span>Payment screenshot</span>
+        <input name="screenshot" type="file" accept="image/jpeg,image/png,image/webp" required aria-describedby="proof-help">
+        <small id="proof-help">JPG, PNG or WebP, up to 3 MB. Show the paid amount and UPI reference.</small>
+      </label>
       <div class="actions"><button type="submit"></button></div>
     </form>`;
   actions.before(panel);
@@ -434,15 +438,23 @@ function showManualPayment(order, actions, token, version, render) {
   const form = panel.querySelector('form');
   form.elements.utr.value = order.utr || '';
   const button = form.querySelector('button');
-  button.textContent = order.utr ? 'Update reference' : 'Submit for verification';
+  button.textContent = order.utr ? 'Update payment proof' : 'Submit for verification';
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     button.disabled = true;
     try {
-      const data = await api('payment/reference', { method: 'POST', token, body: { utr: form.elements.utr.value } });
+      const file = form.elements.screenshot.files[0];
+      if (!file || file.size > 3 * 1024 * 1024) throw new Error('Choose a payment screenshot up to 3 MB.');
+      const screenshot = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.addEventListener('load', () => resolve(String(reader.result).split(',')[1]), { once: true });
+        reader.addEventListener('error', () => reject(new Error('Could not read the screenshot. Choose the file again.')), { once: true });
+        reader.readAsDataURL(file);
+      });
+      const data = await api('payment/reference', { method: 'POST', token, body: { utr: form.elements.utr.value, screenshot } });
       if (version === generation) {
         render(data);
-        message('Payment reference saved. Keep your banking receipt and bookmark this page to check your status.');
+        message('Payment proof received. Verification pending.');
       }
     } catch (error) { if (version === generation) message(error.message); }
     finally { button.disabled = false; }

@@ -18,7 +18,8 @@ const joins = `
 const listSql = ' FROM orders o JOIN attendees a ON a.seq=o.owner' + joins;
 const checkInSql = ' FROM orders o JOIN summit_roster s ON s.ref=o.ref JOIN attendees a ON a.seq=s.attendee' + joins;
 const selectSql = `SELECT o.ref, o.product, o.state, o.amount, o.paid_at, a.seq, a.created,
-  a.email, a.details, r.utr, r.submitted_at, c.checked_in_at, v.reason`;
+  a.email, a.details, r.utr, r.submitted_at, c.checked_in_at, v.reason,
+  EXISTS (SELECT 1 FROM payment_proofs p WHERE p.ref=r.ref) AS has_proof`;
 
 export function installAdminSchema(db) {
   db.exec(`
@@ -40,7 +41,7 @@ export function installAdminSchema(db) {
   }
 }
 
-export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publicUrl, local, json, read, uid, orderLabel, verifyManual, audit, sendCorrection, mailPaused, launchHold }) {
+export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publicUrl, local, json, read, uid, orderLabel, verifyManual, audit, mailPaused, launchHold }) {
   const credentials = new Map(accounts.map((account) => [account.user, account]));
   const fakeCredential = { salt: randomBytes(24).toString('hex'), hash: randomBytes(32).toString('hex') };
   const sessions = new Map();
@@ -122,7 +123,7 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
       ref: row.ref, attendeeId: uid(row.seq), name: details.name, email: row.email,
       batch: details.batch, product: row.product, label: orderLabel(row.product),
       state: row.state, amount: row.amount / 100, utr: row.utr, reason: row.reason,
-      submittedAt: row.submitted_at, paidAt: row.paid_at, checkedInAt: row.checked_in_at,
+      submittedAt: row.submitted_at, hasProof: Boolean(row.has_proof), paidAt: row.paid_at, checkedInAt: row.checked_in_at,
       createdAt: row.created, ...(full ? { details } : {}),
       selections, members,
     };
@@ -171,17 +172,17 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
     if (!manual || typeof body.ref !== 'string' || typeof body.utr !== 'string' ||
         !Object.hasOwn(rejectionReasons, body.reason)) throw new InputError('Select a payment review reason.');
     return atomic(() => {
-      const order = get(`SELECT o.*, r.utr FROM orders o
+      const order = get(`SELECT o.*, r.utr, r.submitted_at FROM orders o
         JOIN manual_receipts r ON r.ref=o.ref WHERE o.ref=?`, body.ref);
-      if (!order || order.state !== 'pending' || order.link_id || order.utr !== body.utr) {
+      if (!order || order.state !== 'pending' || order.link_id || order.utr !== body.utr ||
+          (body.submittedAt !== undefined && order.submitted_at !== body.submittedAt)) {
         throw new InputError('This payment reference changed. Refresh the queue before reviewing it.');
       }
       run('DELETE FROM manual_receipts WHERE ref=?', body.ref);
       run(`INSERT INTO payment_reviews(ref,reason) VALUES(?,?) ON CONFLICT(ref) DO UPDATE SET reason=excluded.reason`,
         body.ref, body.reason);
       audit('payment-rejected', body.ref, body.utr + ' · ' + body.reason, actor);
-      sendCorrection(order, body.reason);
-      return { message: 'Correction requested. An email with the payment status link was queued.' };
+      return { message: 'Correction requested. The reason is visible on the attendee’s payment page.' };
     });
   }
 
@@ -261,6 +262,14 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
           manual, demo: local, mailPaused: owner && mailPaused, launchHold: owner && launchHold, user, role });
       }
       if (pathname === '/api/admin/orders') return json(res, 200, queue(url, role));
+      if (pathname === '/api/admin/payment-proof') {
+        if (!mayReview) return forbidden();
+        const proof = get('SELECT mime,image FROM payment_proofs WHERE ref=?', url.searchParams.get('ref'));
+        if (!proof) return json(res, 404, { error: 'No screenshot is attached to this payment.' });
+        res.writeHead(200, { 'content-type': proof.mime, 'cache-control': 'private, no-store',
+          'content-security-policy': "default-src 'none'; sandbox", 'x-content-type-options': 'nosniff' });
+        return res.end(proof.image);
+      }
       if (pathname === '/api/admin/activity-summary') {
         if (!mayReview) return forbidden();
         return json(res, 200, { entries: activityReport() });
@@ -299,7 +308,7 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
         if (!manual || typeof body.ref !== 'string' || body.matched !== true || !Number.isSafeInteger(body.amount)) {
           throw new InputError('Confirm that you matched the credited transaction and enter the amount received.');
         }
-        return json(res, 200, { message: verifyManual(body.ref, body.utr, body.amount, user) });
+        return json(res, 200, { message: verifyManual(body.ref, body.utr, body.amount, user, body.submittedAt) });
       }
       if (pathname === '/api/admin/reject') return mayReview ? json(res, 200, reject(body, user)) : forbidden();
       if (pathname === '/api/admin/check-in') return mayCheckIn ? json(res, 200, checkIn(body, user)) : forbidden();

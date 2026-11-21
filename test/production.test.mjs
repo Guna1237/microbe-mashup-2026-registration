@@ -12,6 +12,7 @@ import { pathToFileURL } from 'node:url';
 import { brevoFailure } from '../mail-policy.mjs';
 
 const origin = 'https://register.example.test';
+const screenshot = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aeykAAAAASUVORK5CYII=';
 const node = process.execPath;
 const attendee = {
   name: 'Test Attendee', phone: '9876543210', batch: 'bds24', state: 'Telangana',
@@ -165,18 +166,30 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     const qr = await fetch(base + '/payment-qr', { headers: { authorization: 'Bearer ' + firstToken } });
     assert.equal(qr.status, 200);
     assert.deepEqual(Buffer.from(await qr.arrayBuffer()), readFileSync(testQr));
-    const { data: manual } = await person('payment/reference', 200, { utr: '111122223333' });
+    await person('payment/reference', 400, { utr: '111122223333' });
+    await person('payment/reference', 400, { utr: '111122223333', screenshot: Buffer.from('<svg/>').toString('base64') });
+    const { data: manual } = await person('payment/reference', 200, { utr: '111122223333', screenshot });
     assert.equal(manual.state, 'pending');
     assert.equal(manual.paymentDetails, null);
     assert.equal((await fetch(base + '/payment-qr', { headers: { authorization: 'Bearer ' + firstToken } })).status, 404);
     assert.equal((await frontDesk('admin/orders?view=all', 200)).data.total, 0);
     const ref = manual.orderReference;
+    const proofRoute = 'admin/payment-proof?ref=' + ref;
+    await guest(proofRoute, 401);
+    await frontDesk(proofRoute, 403);
+    const reviewerLogin = await guest('admin/login', 200, { user: 'reviewer', password: accounts.reviewer });
+    const proof = await fetch(base + '/api/' + proofRoute, { headers: { cookie: reviewerLogin.headers.get('set-cookie').split(';')[0] } });
+    assert.equal(proof.status, 200);
+    assert.equal(proof.headers.get('content-type'), 'image/png');
+    assert.match(proof.headers.get('cache-control'), /no-store/);
+    assert.deepEqual(Buffer.from(await proof.arrayBuffer()), Buffer.from(screenshot, 'base64'));
     const payment = { ref, utr: manual.utr, amount: 800, matched: true };
     await frontDesk('admin/verify', 403, payment);
     await finance('admin/verify', 400, { ...payment, amount: 799 });
     await finance('admin/reject', 200, { ref, utr: manual.utr, reason: 'not-found' });
     assert.match((await person('payment', 200)).data.reviewMessage, /could not find/);
-    await person('payment/reference', 200, { utr: '111122223334' });
+    await finance(proofRoute, 404);
+    await person('payment/reference', 200, { utr: '111122223334', screenshot });
     await finance('admin/verify', 400, payment);
     await finance('admin/verify', 200, { ...payment, utr: '111122223334' });
     assert.match((await finance('admin/verify', 200, { ...payment, utr: '111122223334' })).data.message, /already verified/);
@@ -194,8 +207,8 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     await owner('admin/controls', 200, { name: 'workshops', open: true });
     const workshop = (await ws('activities', 200, { items: ['ipc'], registrationId: paid.participantId })).data;
     const workshopStatus = api(base, { token: workshop.token });
-    await workshopStatus('payment/reference', 400, { utr: '111122223334' });
-    const workshopReceipt = (await workshopStatus('payment/reference', 200, { utr: '111122223335' })).data;
+    await workshopStatus('payment/reference', 400, { utr: '111122223334', screenshot });
+    const workshopReceipt = (await workshopStatus('payment/reference', 200, { utr: '111122223335', screenshot })).data;
     await finance('admin/verify', 200, { ref: workshopReceipt.orderReference, utr: workshopReceipt.utr, amount: 2500, matched: true });
 
     const audit = (await owner('admin/audit', 200)).data.entries;
@@ -290,27 +303,15 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     assert.equal(pending.partySize, 4);
     assert.equal(pending.participantId, null);
     assert.equal(pending.workshopToken, null);
+    await guest('register/access', 200, { email: four[0].email });
     run(['server.mjs', 'jobs:drain'], env);
-    const beforeVerification = readFileSync(join(root, 'outbox.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-    assert.equal(beforeVerification.length, 1);
-    assert.equal(beforeVerification[0].to, four[0].email);
-    assert.match(beforeVerification[0].subject, /Basic Registration received/);
-    assert.match(beforeVerification[0].text, /#payment=/);
-    assert.doesNotMatch(JSON.stringify(beforeVerification), /MMSHP-|chat\.whatsapp\.com/);
-    await guest('register/access', 200, { email: four[0].email });
-    await guest('register/access', 200, { email: four[0].email });
-    await guest('register/access', 200, { email: four[1].email });
-    await guest('register/access', 200, { email: 'unlisted@example.test' });
-    const receipt = (await leaderPayment('payment/reference', 200, { utr: '333333444444' })).data;
+    assert.ok(!existsSync(join(root, 'outbox.jsonl')));
+    const receipt = (await leaderPayment('payment/reference', 200, { utr: '333333444444', screenshot })).data;
     await owner('admin/verify', 200, { ref: receipt.orderReference, utr: receipt.utr, amount: 2880, matched: true });
     run(['server.mjs', 'jobs:drain'], env);
     const messages = readFileSync(join(root, 'outbox.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-    assert.equal(messages.filter(({ subject }) => /registration received/i.test(subject)).length, 1);
-    assert.doesNotMatch(JSON.stringify(messages), /chat\.whatsapp\.com/);
-    const recovery = messages.filter(({ subject }) => subject.includes('Recover your Basic Registration'));
-    assert.equal(recovery.length, 2);
-    assert.ok(recovery.find(({ to }) => to === four[0].email).text.includes('#payment='));
-    assert.ok(!recovery.find(({ to }) => to === four[1].email).text.includes('#payment='));
+    assert.equal(messages.length, 4);
+    assert.doesNotMatch(JSON.stringify(messages), /registration received|chat\.whatsapp\.com/i);
     const confirmations = messages.filter(({ subject }) => subject.includes('confirmed'));
     assert.equal(confirmations.length, 4);
     const ids = confirmations.map((mail) => ({
@@ -344,7 +345,7 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     assert.equal((await call(person.token)('activities', 200, selected)).data.token, result.token);
     await call(person.token)('activities', 400, { registrationId: person.id, items: ['ipc', 'beyond'] });
     const paidActivities = call(result.token);
-    const activityReceipt = (await paidActivities('payment/reference', 200, { utr: '888888444444' })).data;
+    const activityReceipt = (await paidActivities('payment/reference', 200, { utr: '888888444444', screenshot })).data;
     assert.equal(activityReceipt.amount, 2750);
     await owner('admin/verify', 200, { ref: activityReceipt.orderReference, utr: activityReceipt.utr, amount: 2750, matched: true });
     const checkin = (await owner('admin/orders?view=check-in&q=' + priorId, 200)).data.rows;
@@ -389,6 +390,13 @@ test('cron mode sends queued demo email once across overlapping processes', { ti
       body: JSON.stringify({ ...attendee, email: 'cron-test@example.test' }),
     });
     assert.equal(reply.status, 200);
+    const { token } = await reply.json();
+    const { data: receipt } = await api(base, { token })('payment/reference', 200,
+      { utr: '444444555555', screenshot }, { origin: base });
+    const { headers } = await api(base)('admin/login', 200,
+      { user: 'organizer', password: 'mashup-local-preview-only' }, { origin: base });
+    await api(base, { cookie: headers.get('set-cookie').split(';')[0] })('admin/verify', 200,
+      { ref: receipt.orderReference, utr: receipt.utr, amount: 800, matched: true }, { origin: base });
     const outbox = join(root, 'outbox.jsonl');
     assert.ok(!existsSync(outbox));
     const runWorker = () => promisify(execFile)(node, ['server.mjs', 'jobs:drain'], { env });
@@ -396,7 +404,7 @@ test('cron mode sends queued demo email once across overlapping processes', { ti
     const messages = readFileSync(outbox, 'utf8').trim().split('\n').map(JSON.parse);
     assert.equal(messages.length, 1);
     assert.equal(messages[0].to, 'cron-test@example.test');
-    assert.match(messages[0].subject, /registration received/i);
+    assert.match(messages[0].subject, /registration confirmed/i);
   } finally {
     if (stop) await stop();
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));

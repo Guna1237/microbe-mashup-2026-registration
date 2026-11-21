@@ -5,7 +5,7 @@ Two forms on one website for the 11–12 December 2026 student summit hosted by 
 - **Basic Registration** is mandatory. Individuals pay ₹800. Groups of four pay ₹720 per person (₹2,880 total). One leader submits the group details and pays once. After verification, every member receives their own `MMSHP-###` ID and private booking link.
 - **Events & Workshops** verifies the attendee’s private link and their own Registration ID. Eligible attendees can choose events, including the three-person Microbe Mayhem competition, and workshops. Selected activities share one checkout, with duplicate activity bookings prevented.
 - **Payments** use organizer-verified UPI by default. Attendees enter their UPI reference, and organizers approve only after matching the settled payment against the receiving account. Razorpay is available as an optional alternative.
-- **Email** uses Brevo with a persistent queue. The person submitting Basic Registration gets a receipt with their payment status link. After verification, each participant gets their own ID and booking link. The Events & Workshops confirmation includes the configured WhatsApp invite after activity payment verification. Payment corrections and recovery links go by email. `MAIL_NOTICES=all` also sends activity receipts and can send activity confirmations without an invite.
+- **Email** uses Brevo with a persistent queue. The payment page shows submission, verification and correction status. After verification, each Basic Registration participant gets their own ID and booking link by email. The Events & Workshops confirmation includes the configured WhatsApp invite after activity payment verification. Verified participants can request their link again. `MAIL_NOTICES=all` can send verified activity confirmations without a WhatsApp invite.
 
 Place the official Summit Brochure at `public/summit-brochure.pdf` and redeploy. The brochure page displays an availability message until that file is present.
 
@@ -18,8 +18,8 @@ Run `npm test` to exercise 525 synthetic registrations, individual and group pri
 ## Manual UPI payment and verification
 
 1. Use `PAYMENT_MODE=manual`. Before publishing, set `MANUAL_UPI_ID` and `MANUAL_PAYEE` to the organizer's verified receiving account details. To display the existing QR, set `MANUAL_QR_FILE` to the absolute path of that account's PNG QR image. Preview uses no real payment details.
-2. The attendee sees the exact amount, pays by UPI, and enters the transaction reference. The site prevents one reference from being used for multiple orders. A submitted reference leaves the order pending.
-3. Open **Organizer dashboard → Orders & check-in → Needs payment review**. Copy the UPI reference and compare the displayed amount with the settled credit in the bank or merchant app. In **Verify**, confirm the exact reference and amount match. Choose **Amount differs** or **Request correction** to send a payment-status link with the reason. Basic approval unlocks Events & Workshops for each participant. Review each combined activity checkout the same way.
+2. The attendee sees the exact amount, pays by UPI, then submits the transaction reference and a payment screenshot (JPG, PNG, or WebP, up to 3 MB). The site prevents one reference from being used for multiple orders. Submitted payments stay pending until an organizer verifies them.
+3. Open **Organizer dashboard → Orders & check-in → Needs payment review**. Open the screenshot and compare the UPI reference and amount with the settled credit in the bank or merchant app. In **Verify**, confirm the exact reference and amount match. Choose **Amount differs** or **Request correction** to display the reason on the attendee’s payment page. Basic approval unlocks Events & Workshops for each participant. Review each combined activity checkout the same way.
 
    The same approval is available on the host if the dashboard is unavailable:
 
@@ -77,6 +77,6 @@ See [Razorpay Payment Links](https://razorpay.com/docs/api/payments/payment-link
 ## Organizer operations
 
 - Run `npm run --silent export` on the host to export registrations and payment status as JSON. The export includes applicant contact and team details, so store it privately. Filter `product === 'summit' && state === 'paid'` for check-in.
-- Monitor payment status and Brevo delivery. Brevo Free allows 300 emails per day. Keep `MAIL_NOTICES=essential` to skip optional activity receipts. The site queues mail after its rolling 24-hour allowance is used. For 500 individual registrations, the Basic receipts and Registration IDs alone total 1,000 emails.
+- Monitor payment status and Brevo delivery. Brevo Free allows 300 emails per day. The site queues mail after its rolling 24-hour allowance is used. Sending 500 verified Registration IDs takes at least two days on Brevo Free.
 - For manual payments, use the receiving account statement as the source for verification. The website accepts a UPI reference and does not collect screenshots.
 - Brevo retries reuse the same message key within its 30-minute deduplication window. Mail jobs outside its deduplication window stop and require checking the provider's delivery log before a resend. An expired or cancelled Razorpay link directs the attendee to the organizers.

@@ -124,6 +124,11 @@ db.exec(`
     ref TEXT PRIMARY KEY REFERENCES orders(ref), utr TEXT NOT NULL UNIQUE,
     submitted_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS payment_proofs (
+    ref TEXT PRIMARY KEY REFERENCES manual_receipts(ref) ON DELETE CASCADE,
+    mime TEXT NOT NULL CHECK(mime IN ('image/png','image/jpeg','image/webp')),
+    image BLOB NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS job_leases (
     name TEXT PRIMARY KEY, worker TEXT NOT NULL, expires INTEGER NOT NULL
   );
@@ -148,6 +153,9 @@ if (!db.prepare('PRAGMA table_info(mail)').all().some(({ name }) => name === 'se
   db.exec('ALTER TABLE mail ADD COLUMN send_provider TEXT');
 }
 installAdminSchema(db);
+db.exec(`DELETE FROM mail WHERE sent IS NULL AND
+  (id LIKE '%/received' OR id LIKE '%/correction-%'
+    OR (id LIKE '%/registration-access-%' AND instr(body,char(10) || 'Registration ID: ')=0))`);
 if (preflight) {
   if (db.prepare('PRAGMA quick_check').get().quick_check !== 'ok') throw new Error('SQLite did not pass its quick check.');
   if (mailPaused) console.log('Outgoing email is paused.');
@@ -224,21 +232,6 @@ function queue(order, template, subject, body, person = attendee(order.owner)) {
       '\n\nTeam Microbe Mashup ’26\nMamata Academy of Medical Sciences');
 }
 
-function acknowledge(order) {
-  if (order.product !== 'summit' && !mailAll) return;
-  queue(order, 'received', orderLabel(order.product) + ' received',
-    'Your ' + orderLabel(order.product).toLowerCase() + ' request has been received.\n' +
-    'Payment and status: ' + statusUrl(order) + '\n\n' +
-    (order.product === 'summit' ? 'Each participant will receive their Registration ID after payment is verified.'
-      : 'Your activities are confirmed after payment is verified.'));
-}
-
-function sendCorrection(order, reason) {
-  queue(order, 'correction-' + order.utr + '-' + reason, 'Payment reference needs attention',
-    rejectionReasons[reason] + '\n\n' +
-    '\nPayment and status: ' + statusUrl(order));
-}
-
 function confirm(order) {
   atomic(() => {
     recordConfirmation(order);
@@ -277,7 +270,23 @@ function normalizeUtr(value) {
   return utr;
 }
 
-function submitReceipt(order, utr) {
+const proofLimit = 3 * 1024 * 1024;
+
+function readProof(value) {
+  if (typeof value !== 'string' || !value) throw new InputError('Upload a screenshot of your UPI payment.');
+  if (value.length > proofLimit * 4 / 3) throw new InputError('Upload a screenshot smaller than 3 MB.');
+  const image = Buffer.from(value, 'base64');
+  if (image.toString('base64') !== value) throw new InputError('Upload a valid payment screenshot.');
+  if (image.length >= 24 && image.subarray(0, 8).toString('hex') === '89504e470d0a1a0a' &&
+      image.toString('ascii', 12, 16) === 'IHDR') return { mime: 'image/png', image };
+  if (image.length >= 12 && image[0] === 0xff && image[1] === 0xd8 && image[2] === 0xff &&
+      image.at(-2) === 0xff && image.at(-1) === 0xd9) return { mime: 'image/jpeg', image };
+  if (image.length >= 20 && image.toString('ascii', 0, 4) === 'RIFF' &&
+      image.toString('ascii', 8, 12) === 'WEBP') return { mime: 'image/webp', image };
+  throw new InputError('Upload a JPG, PNG or WebP screenshot.');
+}
+
+function submitReceipt(order, utr, proof) {
   atomic(() => {
     const current = get('SELECT state, link_id FROM orders WHERE ref=?', order.ref);
     if (current.state !== 'pending' || current.link_id) throw new InputError('This payment cannot accept a new reference.');
@@ -285,17 +294,20 @@ function submitReceipt(order, utr) {
     if (used && used.ref !== order.ref) throw new InputError('This transaction reference is already in use. Check it or contact the organizers.');
     run(`INSERT INTO manual_receipts(ref, utr, submitted_at) VALUES(?,?,?)
       ON CONFLICT(ref) DO UPDATE SET utr=excluded.utr, submitted_at=excluded.submitted_at`, order.ref, utr, Date.now());
+    run(`INSERT INTO payment_proofs(ref,mime,image) VALUES(?,?,?)
+      ON CONFLICT(ref) DO UPDATE SET mime=excluded.mime,image=excluded.image`, order.ref, proof.mime, proof.image);
     run('DELETE FROM payment_reviews WHERE ref=?', order.ref);
   });
 }
 
-function verifyManual(ref, rawUtr, rawAmount, actor) {
+function verifyManual(ref, rawUtr, rawAmount, actor, submittedAt) {
   const amount = Number(rawAmount);
   const utr = normalizeUtr(rawUtr);
   if (!Number.isSafeInteger(amount) || amount < 1) throw new InputError('Enter the whole-rupee amount received.');
   return atomic(() => {
-    const order = get(`SELECT o.*, r.utr FROM orders o JOIN manual_receipts r ON r.ref=o.ref WHERE o.ref=?`, ref);
-    if (!order || order.link_id || order.utr !== utr || order.amount !== amount * 100) {
+    const order = get(`SELECT o.*, r.utr, r.submitted_at FROM orders o JOIN manual_receipts r ON r.ref=o.ref WHERE o.ref=?`, ref);
+    if (!order || order.link_id || order.utr !== utr || order.amount !== amount * 100 ||
+        (submittedAt !== undefined && order.submitted_at !== submittedAt)) {
       throw new InputError('Order reference, submitted UPI reference, or exact amount did not match.');
     }
     if (order.state === 'paid') return 'Payment was already verified.';
@@ -482,13 +494,14 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-async function read(req) {
+async function read(req, limit = 16384) {
   if (req.headers['content-type']?.split(';')[0] !== 'application/json') throw new InputError('Expected JSON.');
+  if (Number(req.headers['content-length']) > limit) throw new InputError('Submission is too large.');
   let length = 0;
   const chunks = [];
   for await (const chunk of req) {
     length += chunk.length;
-    if (length > 16384) throw new InputError('Submission is too large.');
+    if (length > limit) throw new InputError('Submission is too large.');
     chunks.push(chunk);
   }
   let parsed;
@@ -598,7 +611,6 @@ function begin(body) {
       details.email, JSON.stringify(details), secret(), Date.now()).lastInsertRowid);
     const order = newOrder(ids[0], 'summit', amount);
     for (const id of ids.slice(1)) run('INSERT INTO registration_members(ref,attendee) VALUES (?,?)', order.ref, id);
-    acknowledge(order);
     return order;
   });
 }
@@ -642,7 +654,6 @@ function beginActivities(req, body) {
       run('INSERT INTO activity_items(ref,attendee,activity,fee,details) VALUES(?,?,?,?,?)',
         order.ref, person.seq, item.id, item.fee * 100, item.id === 'mayhem' ? JSON.stringify(team) : null);
     }
-    acknowledge(order);
     return order.token;
   });
 }
@@ -663,16 +674,10 @@ function sendRegistrationAccess(body) {
   const person = get('SELECT * FROM attendees WHERE email=?', email);
   if (!person) return;
   const order = basicOrderFor(person.seq);
-  if (!order) return;
+  if (order?.state !== 'paid') return;
   const template = 'registration-access-' + person.seq + '-' + Math.floor(Date.now() / (15 * 60000));
-  if (order.state === 'paid') {
-    queue(order, template, 'Recover your Basic Registration',
-      'Registration ID: ' + uid(person.seq) + '\n\nOpen Events & Workshops: ' + invitation(person), person);
-  } else if (order.state === 'pending') {
-    queue(order, template, 'Recover your Basic Registration',
-      order.owner === person.seq ? 'Open your private payment status: ' + statusUrl(order)
-        : 'Your group leader can check the group payment. Once it is verified, you will receive your own Registration ID.', person);
-  }
+  queue(order, template, 'Recover your Basic Registration',
+    'Registration ID: ' + uid(person.seq) + '\n\nOpen Events & Workshops: ' + invitation(person), person);
 }
 
 const assets = new Map([
@@ -730,7 +735,7 @@ function allowRegistration(req) {
 }
 
 const admin = createAdmin({ db, atomic, manual, accounts: staff, demo, clientIp, publicUrl, local, json, read, uid,
-  orderLabel, verifyManual, audit, sendCorrection, mailPaused, launchHold });
+  orderLabel, verifyManual, audit, mailPaused, launchHold });
 
 const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, async (req, res) => {
   for (const [header, value] of Object.entries(headers)) res.setHeader(header, value);
@@ -810,8 +815,8 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
     }
     if (manual && pathname === '/api/payment/reference' && method === 'POST') {
       const order = authorizedOrder(req);
-      const body = await read(req);
-      submitReceipt(order, normalizeUtr(body.utr));
+      const body = await read(req, proofLimit * 4 / 3 + 1024);
+      submitReceipt(order, normalizeUtr(body.utr), readProof(body.screenshot));
       return json(res, 200, summary(authorizedOrder(req)));
     }
     if (demo && !manual && pathname === '/api/demo/settle' && method === 'POST') {
