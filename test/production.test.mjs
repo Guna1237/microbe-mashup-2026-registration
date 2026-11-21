@@ -276,7 +276,7 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     const owner = call(undefined, headers.get('set-cookie').split(';')[0]);
     const membersFor = (size, prefix) => Array.from({ length: size }, (_, index) => ({
       ...attendee, name: prefix + ' Member ' + (index + 1), email: prefix + index + '@example.test',
-      batch: index === 1 ? 'bds24' : 'mbbs24',
+      batch: ['mbbs24', 'bds24', 'final', 'pg'][index],
     }));
     for (const size of [2, 3, 5]) {
       await guest('register', 400, { members: membersFor(size, 'invalid'), consent: true, groupConsent: true });
@@ -317,7 +317,18 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     await guest('activities/unlock', 400, { registrationId: person.id });
     await call(person.token)('activities/unlock', 400, { registrationId: member.id });
     await call(member.token)('activities/unlock', 200, { registrationId: member.id });
-    await call(member.token)('activities', 400, { registrationId: member.id, items: ['quiz'] });
+    for (const [index, expectedBatch] of ['bds24', 'final', 'pg'].entries()) {
+      const { id, token } = ids.find(({ email }) => email === four[index + 1].email);
+      const participant = call(token);
+      const { data: state } = await participant('activities/unlock', 200, { registrationId: id });
+      assert.equal(state.batch, expectedBatch);
+      for (const items of [['quiz'], ['poster', 'ipc'], ['mayhem']]) {
+        const { data } = await participant('activities', 400, { registrationId: id, items });
+        assert.match(data.error, /can book workshops only/);
+      }
+      const { data: booking } = await participant('activities', 200, { registrationId: id, items: ['ipc'] });
+      assert.equal((await call(booking.token)('payment', 200)).data.amount, 2500);
+    }
     const selected = { registrationId: person.id, items: ['quiz', 'ipc'] };
     const result = (await call(person.token)('activities', 200, selected)).data;
     assert.equal((await call(person.token)('activities', 200, selected)).data.token, result.token);

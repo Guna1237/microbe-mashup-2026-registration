@@ -118,7 +118,7 @@ export function activitySelection(body, person) {
   const items = body.items.map((id) => activities.find((item) => item.id === id));
   if (items.some((item) => !item)) throw new InputError('Select valid activities.');
   if (items.some(({ type }) => type === 'event') && !batches.find(({ id }) => id === person.batch)?.competition) {
-    throw new InputError('This batch can book workshops. Competitions are open to 2k24 and 2k25 MBBS.');
+    throw new InputError('Your batch can book workshops only. Events are open to 2k24 and 2k25 MBBS.');
   }
   let team;
   if (body.items.includes('mayhem')) {

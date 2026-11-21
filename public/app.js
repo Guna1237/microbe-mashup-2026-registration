@@ -230,11 +230,11 @@ function showActivitySelection(id, state, version) {
       (legacy.length ? '<li><span>' + legacy.join(', ') + '</span><strong>Confirmed</strong></li>' : '') + '</ul></section>' : '') +
     (state.activitiesOpen ? `
       <form id="activities-form">
-        <section class="block"><h3>Events</h3><div class="options">${eligible ? options(catalog.events) :
-          '<p class="hint">Event competitions are open to 2k24 and 2k25 MBBS. You can still book workshops.</p>'}</div></section>
+        ${eligible ? `<section class="block"><h3>Events</h3><div class="options">${options(catalog.events)}</div></section>` :
+          '<p class="journey-note">Your batch can book workshops only. Events are open to 2k24 and 2k25 MBBS.</p>'}
         <fieldset class="team" id="team" disabled hidden>
           <legend>Microbe Mayhem team</legend>
-          <p class="hint">Use the same team name for all three members.</p>
+          <p class="hint">Each team member must book Microbe Mayhem with their own eligible Registration ID and use the same team name.</p>
           <div class="grid">${input('teamName', 'Team name', 'maxlength="120"')}
             ${select('teamRole', 'Team role', [{ id: 'leader', name: 'Group leader' }, { id: 'member', name: 'Team member' }])}</div>
           <fieldset id="members" class="block" disabled hidden>
