@@ -110,10 +110,13 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
 
   function mapRow(row, full = false, includeGroup = true) {
     const details = JSON.parse(row.details);
-    const selections = all('SELECT activity,details FROM activity_items WHERE ref=? ORDER BY activity', row.ref).map(({ activity, details: itemDetails }) => ({
-      name: activities.find(({ id }) => id === activity)?.name || activity,
-      ...(full && itemDetails ? { team: JSON.parse(itemDetails) } : {}),
-    }));
+    const selections = all('SELECT activity,details FROM activity_items WHERE ref=? ORDER BY activity', row.ref).map(({ activity, details: itemDetails }) => {
+      const team = itemDetails && JSON.parse(itemDetails);
+      return {
+        name: activities.find(({ id }) => id === activity)?.name || activity,
+        ...(team && (full || team.leaderId) ? { team } : {}),
+      };
+    });
     const members = includeGroup && row.product === 'summit'
       ? all(`SELECT a.seq, json_extract(a.details,'$.name') AS name FROM registration_members g
         JOIN attendees a ON a.seq=g.attendee WHERE g.ref=? ORDER BY a.seq`, row.ref)

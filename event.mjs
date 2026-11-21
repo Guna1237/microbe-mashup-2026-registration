@@ -116,28 +116,15 @@ export function registration(body) {
 export const activities = [...events.map((item) => ({ ...item, type: 'event' })),
   ...workshops.map((item) => ({ ...item, type: 'workshop' }))];
 
+export const eventEligible = (batchId) => batches.some(({ id, competition }) => id === batchId && competition);
+
 export function activitySelection(body, person) {
   if (!Array.isArray(body.items) || !body.items.length || body.items.length > activities.length ||
       new Set(body.items).size !== body.items.length) throw new InputError('Select one or more activities.');
   const items = body.items.map((id) => activities.find((item) => item.id === id));
   if (items.some((item) => !item)) throw new InputError('Select valid activities.');
-  if (items.some(({ type }) => type === 'event') && !batches.find(({ id }) => id === person.batch)?.competition) {
+  if (items.some(({ type }) => type === 'event') && !eventEligible(person.batch)) {
     throw new InputError('Your batch can book workshops only. Events are open to 2k24 and 2k25 MBBS.');
   }
-  let team;
-  if (body.items.includes('mayhem')) {
-    const input = body.team || {};
-    if (!['leader', 'member'].includes(input.role)) throw new InputError('Select your Microbe Mayhem team role.');
-    team = { name: field(input, 'name', 'team name').toUpperCase(), role: input.role };
-    if (team.role === 'leader') {
-      if (input.permission !== true) throw new InputError('Confirm permission to share your teammates’ details.');
-      team.members = [
-        { name: person.name, phone: person.phone },
-        { name: field(input, 'member2', 'second team member’s name').toUpperCase(), phone: phone(field(input, 'phone2', 'second member’s phone', 24)) },
-        { name: field(input, 'member3', 'third team member’s name').toUpperCase(), phone: phone(field(input, 'phone3', 'third member’s phone', 24)) },
-      ];
-      if (new Set(team.members.map((member) => member.phone)).size !== 3) throw new InputError('Enter a different phone number for each team member.');
-    }
-  }
-  return { items, team };
+  return items;
 }

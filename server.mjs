@@ -6,11 +6,12 @@ import { isIP } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
-import { basicFee, basicRates, batches, events, workshops, states, activities, activitySelection, registration, emailAddress, normalizeRegistrationId, InputError } from './event.mjs';
+import { basicFee, basicRates, batches, events, workshops, states, activities, activitySelection, eventEligible, registration, emailAddress, normalizeRegistrationId, InputError } from './event.mjs';
 import { createAdmin, installAdminSchema, previewPassword, rejectionReasons } from './admin.mjs';
 import { readStaff, previewStaff } from './staff.mjs';
 import { createBackup } from './ops.mjs';
 import { brevoFailure, brevoKey, dailyLimit, dayMs, retryWindowMs } from './mail-policy.mjs';
+import { registrationEmail } from './mail-template.mjs';
 
 const env = process.env;
 const demo = env.DEMO === '1';
@@ -242,9 +243,10 @@ function recordConfirmation(order) {
     const change = run("UPDATE orders SET state='paid', paid_at=? WHERE ref=? AND state<>'paid'", Date.now(), order.ref);
     if (!change.changes) return;
     const label = orderLabel(order.product);
-    const guidelines = '\n11–12 December 2026 · Mamata Academy of Medical Sciences, Bachupally, Hyderabad\n' +
-      'Arrive 30 minutes before reporting time. Bring your college ID, registration ID and any materials required for your activities. ' +
-      'Follow staff instructions and maintain professional conduct. Check @microbemashup for updates.\n';
+    const guidelines = '\nSummit dates: 11–12 December 2026\n' +
+      'Venue: Mamata Academy of Medical Sciences, Bachupally, Hyderabad\n' +
+      'Check-in: Arrive 30 minutes before reporting time and bring your college ID and Registration ID.\n' +
+      'Bring any materials required for your booked activities. Follow @microbemashup for updates.\n';
     if (order.product === 'summit') {
       const people = all('SELECT a.* FROM summit_roster s JOIN attendees a ON a.seq=s.attendee WHERE s.ref=?', order.ref);
       for (const person of people) {
@@ -256,11 +258,17 @@ function recordConfirmation(order) {
       return;
     }
     if (!activityConfirmationEmail) return;
-    const booked = all('SELECT activity FROM activity_items WHERE ref=? ORDER BY activity', order.ref)
-      .map(({ activity }) => activities.find(({ id }) => id === activity)?.name).filter(Boolean);
+    const selections = all('SELECT activity,details FROM activity_items WHERE ref=? ORDER BY activity', order.ref);
+    const booked = selections.map(({ activity }) => activities.find(({ id }) => id === activity)?.name).filter(Boolean);
+    const team = JSON.parse(selections.find(({ activity }) => activity === 'mayhem')?.details || 'null');
+    const teamDetails = team?.leaderId
+      ? '\nMicrobe Mayhem team leader: ' + team.leaderId +
+        (team.memberIds ? '\nTeammate Registration IDs: ' + team.memberIds.join(', ') : '') + '\n'
+      : '';
     queue(order, 'paid', label + ' confirmed',
       label + ' payment is confirmed.\nRegistration ID: ' + uid(order.owner) +
       '\nAmount received: INR ' + order.amount / 100 + (booked.length ? '\nBooked: ' + booked.join(', ') + '\n' : '\n') +
+      teamDetails + '\nBooking status: ' + statusUrl(order) + '\n' +
       (whatsapp ? '\nOfficial Events & Workshops WhatsApp group: ' + whatsapp + '\n' : '') + guidelines);
 }
 
@@ -409,7 +417,7 @@ async function deliver(msg) {
       body: JSON.stringify({
         sender: { name: env.BREVO_SENDER_NAME || 'Microbe Mashup ’26', email: sender },
         replyTo: { email: env.REPLY_TO || 'mams.microbemashup@gmail.com' },
-        subject: msg.subject, textContent: msg.body,
+        subject: msg.subject, textContent: msg.body, htmlContent: registrationEmail(msg, publicUrl),
         messageVersions: [{ to: [{ email: msg.recipient }] }],
         headers: { idempotencyKey: brevoKey(msg.id, msg.first_attempt || now) },
       }),
@@ -635,9 +643,48 @@ function bookedActivities(person) {
   };
 }
 
+function mayhemAttendee(rawId) {
+  const id = normalizeRegistrationId(rawId);
+  const match = /^MMSHP-(\d{3,8})$/.exec(id);
+  const seq = Number(match?.[1]);
+  const person = match && id === uid(seq) && attendee(seq);
+  if (!person || basicOrderFor(seq)?.state !== 'paid' || !eventEligible(JSON.parse(person.details).batch)) {
+    throw new InputError('Use an MMSHP ID from a verified Basic Registration in an event-eligible batch.');
+  }
+  return id;
+}
+
+function mayhemTeam(input, person) {
+  const ownId = uid(person.seq);
+  const bookings = all(`SELECT i.attendee, i.details FROM activity_items i JOIN orders o ON o.ref=i.ref
+    WHERE i.activity='mayhem' AND o.state IN ('pending','paid')`)
+    .map(({ attendee: seq, details }) => ({ id: uid(seq), team: JSON.parse(details || 'null') }));
+  if (input?.role === 'member') {
+    const leader = mayhemAttendee(input.leaderId);
+    const roster = bookings.find(({ id, team }) => id === leader && team?.role === 'leader')?.team;
+    const listed = roster?.memberIds
+      ? roster.memberIds.includes(ownId)
+      : roster?.members?.slice(1).some(({ phone }) => phone === JSON.parse(person.details).phone);
+    if (leader === ownId || !listed) {
+      throw new InputError('Ask your team leader to submit the team using your MMSHP ID first.');
+    }
+    return { role: 'member', leaderId: leader };
+  }
+  if (input?.role !== 'leader') throw new InputError('Select your Microbe Mayhem team role.');
+  if (input.permission !== true) throw new InputError('Confirm you have permission to enter your teammates’ IDs.');
+  const memberIds = [mayhemAttendee(input.member2Id), mayhemAttendee(input.member3Id)];
+  const ids = new Set([ownId, ...memberIds]);
+  if (ids.size !== 3) throw new InputError('Enter two different teammate IDs. Your own ID is already included.');
+  if (bookings.some(({ id, team }) => {
+    if (team?.role === 'member' && team.leaderId === ownId) return !memberIds.includes(id);
+    return ids.has(id) || team?.memberIds?.some((memberId) => ids.has(memberId));
+  })) throw new InputError('One of these Registration IDs is already linked to another Microbe Mayhem booking.');
+  return { role: 'leader', leaderId: ownId, memberIds };
+}
+
 function beginActivities(req, body) {
   const person = activityAttendee(req, body.registrationId);
-  const { items, team } = activitySelection(body, JSON.parse(person.details));
+  const items = activitySelection(body, JSON.parse(person.details));
   return atomic(() => {
     const prior = bookedActivities(person);
     const requested = items.map(({ id }) => id);
@@ -649,6 +696,7 @@ function beginActivities(req, body) {
     }
     // Expired or cancelled Razorpay links release their activity claims before a new order is created.
     run("DELETE FROM activity_items WHERE attendee=? AND ref IN (SELECT ref FROM orders WHERE owner=? AND state IN ('expired','cancelled'))", person.seq, person.seq);
+    const team = requested.includes('mayhem') ? mayhemTeam(body.team, person) : null;
     const order = newOrder(person.seq, 'activities:' + secret().slice(0, 16), items.reduce((sum, item) => sum + item.fee * 100, 0));
     for (const item of items) {
       run('INSERT INTO activity_items(ref,attendee,activity,fee,details) VALUES(?,?,?,?,?)',

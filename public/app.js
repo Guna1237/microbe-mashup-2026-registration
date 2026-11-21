@@ -234,14 +234,18 @@ function showActivitySelection(id, state, version) {
           '<p class="journey-note">Your batch can book workshops only. Events are open to 2k24 and 2k25 MBBS.</p>'}
         <fieldset class="team" id="team" disabled hidden>
           <legend>Microbe Mayhem team</legend>
-          <p class="hint">Each team member must book Microbe Mayhem with their own eligible Registration ID and use the same team name.</p>
-          <div class="grid">${input('teamName', 'Team name', 'maxlength="120"')}
-            ${select('teamRole', 'Team role', [{ id: 'leader', name: 'Group leader' }, { id: 'member', name: 'Team member' }])}</div>
+          <p class="hint">Each member books and pays separately. The team leader enters both teammates’ verified MMSHP IDs first.</p>
+          ${select('teamRole', 'Team role', [{ id: 'leader', name: 'Team leader' }, { id: 'member', name: 'Team member' }])}
           <fieldset id="members" class="block" disabled hidden>
-            <legend>Teammate details</legend>
-            <div class="grid">${input('member2', 'Second member name', 'maxlength="120"')}${input('phone2', 'Second member phone', 'type="tel" maxlength="24"')}
-              ${input('member3', 'Third member name', 'maxlength="120"')}${input('phone3', 'Third member phone', 'type="tel" maxlength="24"')}</div>
-            <label class="consent"><input type="checkbox" name="permission" required><span>I have permission to share my teammates’ details.</span></label>
+            <legend>Teammate Registration IDs</legend>
+            <p class="hint">Your own ID is already included.</p>
+            <div class="grid">${input('member2Id', 'Second member Registration ID', 'placeholder="MMSHP-002" maxlength="14" autocapitalize="characters"')}
+              ${input('member3Id', 'Third member Registration ID', 'placeholder="MMSHP-003" maxlength="14" autocapitalize="characters"')}</div>
+            <label class="consent"><input type="checkbox" name="permission" required><span>I have permission to enter my teammates’ Registration IDs.</span></label>
+          </fieldset>
+          <fieldset id="leader-id" class="block" disabled hidden>
+            <legend>Find your team</legend>
+            ${input('leaderId', 'Team leader’s Registration ID', 'placeholder="MMSHP-001" maxlength="14" autocapitalize="characters"')}
           </fieldset>
         </fieldset>
         <section class="block"><h3>Workshops</h3><div class="options">${options(catalog.workshops)}</div></section>
@@ -252,11 +256,13 @@ function showActivitySelection(id, state, version) {
   if (!form) return;
   const team = form.querySelector('#team');
   const teammates = form.querySelector('#members');
+  const leaderId = form.querySelector('#leader-id');
   const selected = () => new FormData(form).getAll('items');
   form.addEventListener('change', () => {
     const choices = selected();
     team.hidden = team.disabled = !choices.includes('mayhem');
     teammates.hidden = teammates.disabled = team.disabled || form.elements.teamRole.value !== 'leader';
+    leaderId.hidden = leaderId.disabled = team.disabled || form.elements.teamRole.value !== 'member';
     document.querySelector('#activities-total').textContent = money(choices.reduce((sum, item) => sum + itemById(item).fee, 0));
     document.querySelector('#activities-next').disabled = !choices.length;
   });
@@ -264,8 +270,8 @@ function showActivitySelection(id, state, version) {
     const fields = Object.fromEntries(new FormData(form));
     const result = await api('activities', { method: 'POST', token: accessToken, body: {
       registrationId: id, items: selected(),
-      team: { name: fields.teamName, role: fields.teamRole, member2: fields.member2, phone2: fields.phone2,
-        member3: fields.member3, phone3: fields.phone3, permission: fields.permission === 'on' },
+      team: { role: fields.teamRole, leaderId: fields.leaderId, member2Id: fields.member2Id,
+        member3Id: fields.member3Id, permission: fields.permission === 'on' },
     } });
     if (version === generation) location.hash = 'payment=' + result.token;
   });

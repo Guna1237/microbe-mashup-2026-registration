@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { brevoFailure } from '../mail-policy.mjs';
+import { registrationEmail } from '../mail-template.mjs';
 
 const origin = 'https://register.example.test';
 const screenshot = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aeykAAAAASUVORK5CYII=';
@@ -26,6 +27,20 @@ test('Brevo backoff respects credit limits and rate-limit headers', () => {
   assert.equal(brevoFailure(429, '', '3', now).retryAt, now + 3000);
   assert.ok(brevoFailure(403, '', null, now).pauseQueue);
   assert.equal(brevoFailure(503, '', null, now).definitivelyRejected, false);
+});
+
+test('verification email template renders safe booking and WhatsApp actions', () => {
+  const booking = origin + '/activities#access=' + 'A'.repeat(32);
+  const whatsapp = 'https://chat.whatsapp.com/TestGroupOnly';
+  const body = 'Hello <Attendee>,\nRegistration ID: MMSHP-123\nOpen your personal booking link: ' + booking +
+    '\nOfficial Events & Workshops WhatsApp group: ' + whatsapp;
+  const markup = registrationEmail({ subject: 'Microbe Mashup | Booking confirmed', body }, origin);
+  assert.match(markup, /Booking confirmed/);
+  assert.match(markup, /MMSHP-123/);
+  assert.match(markup, /Hello &lt;Attendee&gt;/);
+  assert.ok(markup.includes('href="' + booking + '"'));
+  assert.ok(markup.includes('href="' + whatsapp + '"'));
+  assert.doesNotMatch(registrationEmail({ subject: 'Test', body: 'Booking: https://other.example.test/' }, origin), /<a href=/);
 });
 
 async function availablePort() {
@@ -235,6 +250,7 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
         const payload = JSON.parse(request.body);
         if (payload.sender.email !== 'mail@example.test' ||
             !payload.messageVersions[0].to[0].email.endsWith('@example.test') ||
+            !payload.htmlContent.includes('<!doctype html>') || !payload.textContent ||
             !/^[0-9a-f-]{36}$/.test(payload.headers.idempotencyKey)) throw new Error('Invalid Brevo payload');
         appendFileSync(process.env.MOCK_REQUEST_LOG, 'attempt\\n');
         return Response.json({ code: 'not_enough_credits' }, { status: 402 });
@@ -340,6 +356,41 @@ test('group passes issue individual IDs and activity checkout uses the correct i
       const { data: booking } = await participant('activities', 200, { registrationId: id, items: ['ipc'] });
       assert.equal((await call(booking.token)('payment', 200)).data.amount, 2500);
     }
+    async function mayhemRegistration(prefix, utr) {
+      const [details] = membersFor(1, prefix);
+      const { data: registration } = await guest('register', 200, details);
+      const payment = call(registration.token);
+      if (utr) {
+        const { data: receipt } = await payment('payment/reference', 200, { utr, screenshot });
+        await owner('admin/verify', 200, { ref: receipt.orderReference, utr, amount: 800, matched: true });
+        const { data: verified } = await payment('payment', 200);
+        return { id: verified.participantId, token: verified.workshopToken };
+      }
+      const { data } = await owner('admin/orders?view=unpaid&q=' + encodeURIComponent(details.email), 200);
+      return { id: data.rows[0].attendeeId };
+    }
+    const second = await mayhemRegistration('mayhem-two', '333333444445');
+    const third = await mayhemRegistration('mayhem-three', '333333444446');
+    const unpaid = await mayhemRegistration('mayhem-unpaid');
+    const team = { role: 'leader', member2Id: second.id, member3Id: third.id, permission: true };
+    const leaderBooking = { registrationId: person.id, items: ['mayhem'], team };
+    const memberBooking = {
+      registrationId: second.id, items: ['mayhem'], team: { role: 'member', leaderId: person.id },
+    };
+    await call(second.token)('activities', 400, memberBooking);
+    for (const invalid of [person.id, second.id, member.id, unpaid.id, 'MMSHP-99999999']) {
+      await call(person.token)('activities', 400, { ...leaderBooking, team: { ...team, member3Id: invalid } });
+    }
+    await call(person.token)('activities', 200, leaderBooking);
+    await call(third.token)('activities', 400, {
+      registrationId: third.id, items: ['mayhem'], team: { ...team, member3Id: person.id },
+    });
+    await call(second.token)('activities', 200, memberBooking);
+    const mayhemRoster = (await owner('admin/orders?view=activities&activity=mayhem', 200)).data.rows;
+    const leader = mayhemRoster.find(({ attendeeId }) => attendeeId === person.id);
+    assert.deepEqual(leader.selections[0].team.memberIds, [second.id, third.id]);
+    assert.equal(mayhemRoster.find(({ attendeeId }) => attendeeId === second.id).selections[0].team.leaderId, person.id);
+
     const selected = { registrationId: person.id, items: ['quiz', 'ipc'] };
     const result = (await call(person.token)('activities', 200, selected)).data;
     assert.equal((await call(person.token)('activities', 200, selected)).data.token, result.token);
@@ -355,7 +406,7 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     assert.equal(report.find(({ id }) => id === 'ipc').paid, 1);
     assert.equal(report.find(({ id }) => id === 'quiz').paid, 1);
     const checkinRows = (await owner('admin/orders?view=check-in', 200)).data.rows;
-    assert.equal(checkinRows.length, 4);
+    assert.equal(checkinRows.length, 6);
     assert.equal(checkinRows.filter(({ checkedInAt }) => checkedInAt).length, 1);
     await guest('activities/access', 200, { registrationId: person.id.replace('MMSHP-', 'MMSPH-'), email: person.email });
     await guest('activities/access', 200, { registrationId: person.id, email: person.email });
