@@ -2,22 +2,24 @@
 
 Two forms on one website for the 11–12 December 2026 student summit hosted by the Department of Microbiology at Mamata Academy of Medical Sciences.
 
-- **Summit** takes attendees through personal details, batch-specific activities and lunch, then a review with itemized pricing. Eligible attendees can enter the three-person Microbe Mayhem competition as a leader or member. Each attendee receives a stable `MMSPH-###` ID.
-- **Workshops** opens for paid summit attendees. The site validates the personal email link and issues a separate checkout for each workshop. An attendee can book multiple workshops.
+- **Basic Registration** is mandatory. Individuals pay ₹800. Groups of 3 or 4 pay ₹750 per person, and groups of 5 pay ₹700 per person. One leader submits the group details and pays once. After verification, every member receives their own `MMSPH-###` ID and private booking link.
+- **Events & Workshops** verifies the attendee’s private link and their own Registration ID. Eligible attendees can choose events, including the three-person Microbe Mayhem competition, and workshops. Selected activities share one checkout, with duplicate activity bookings prevented.
 - **Payments** use organizer-verified UPI by default. Attendees enter their UPI reference, and organizers approve only after matching the settled payment against the receiving account. Razorpay is available as an optional alternative.
-- **Email** uses Resend with a persistent queue. The registration acknowledgment includes the ID and payment-status link. The verified summit email includes the same ID, guidelines, the workshop link and the configured WhatsApp invite. Each paid workshop gets a separate confirmation.
+- **Email** uses Resend with a persistent queue. The acknowledgment contains the payment-status link. The verified Basic Registration email contains the individual ID, private booking link, and any configured WhatsApp invite. Verified activity orders get a separate confirmation with the selected items.
+
+Place the official Summit Brochure at `public/summit-brochure.pdf` and redeploy. The brochure page displays an availability message until that file is present.
 
 ## Preview
 
 Install Node.js 24 or later. Copy `.env.example` to `.env` and run `npm start`. Open `http://127.0.0.1:8108` and use a made-up transaction reference. Sign into `http://127.0.0.1:8108/admin` with the username `organizer` and preview passphrase `mashup-local-preview-only`. Demo mail is written to `demo-data/outbox.jsonl`. Demo mode binds to loopback and uses a different database from production. Production requires a separate staff file.
 
-Run `npm test` to exercise production-mode configuration, staff permissions, 525 synthetic registrations, payment verification, check-in, exports, rate limiting and SQLite backup/restore. The test uses a temporary database and pauses outbound mail.
+Run `npm test` to exercise 525 synthetic registrations, all three group rates, individual ID delivery and booking access, staff permissions, payment verification, check-in, and SQLite backup and restore. Tests use temporary data and either pause email or send it to a local outbox.
 
 ## Manual UPI payment and verification
 
 1. Use `PAYMENT_MODE=manual`. Before publishing, set `MANUAL_UPI_ID` and `MANUAL_PAYEE` to the organizer's verified receiving account details. To display the existing QR, set `MANUAL_QR_FILE` to the absolute path of that account's PNG QR image. Preview uses no real payment details.
 2. The attendee sees the exact amount, pays by UPI, and enters the transaction reference. The site prevents one reference from being used for multiple orders. A submitted reference leaves the order pending.
-3. Open **Organizer dashboard → Orders & check-in → Needs payment review**. Match the submitted UPI reference and credited amount against the receiving account statement or merchant app. Choose **Verify**, type the credited amount and confirm the match. Choose **Request correction** to email the attendee an explanation and a link to update the reference. Summit approval unlocks the workshop form. Review each workshop payment the same way.
+3. Open **Organizer dashboard → Orders & check-in → Needs payment review**. Match the UPI reference and credited amount against the bank or merchant app. Choose **Verify**, type the credited amount and confirm the match. Choose **Request correction** to send a payment-status link with the reason. Basic approval unlocks Events & Workshops for each participant. Review each combined activity checkout the same way.
 
    The same approval is available on the host if the dashboard is unavailable:
 
@@ -30,7 +32,8 @@ Run `npm test` to exercise production-mode configuration, staff permissions, 525
 ## Organizer dashboard
 
 - Search by name, email, attendee ID, order reference or UPI reference. Use **Summit check-in** at the entrance. Check-in is available only to verified summit attendees.
-- Pause or reopen new summit registrations and workshop bookings independently. Existing orders can still be paid.
+- Pause or reopen Basic Registration and Events & Workshops independently. Existing orders can still be paid.
+- Open **Event & workshop roster** to see paid and awaiting-payment counts by activity. **View bookings** opens the filtered order list. Use **Summit check-in** to mark each group member separately.
 - **Owners** manage registration, payment reviews, check-in, the email queue, the private roster export and the activity log. **Payment reviewers** can review, approve and request corrections. **Check-in staff** see only paid summit attendees' names, IDs and check-in status. The log identifies the staff account behind each dashboard change.
 - Owners can retry recent failed mail sends. For older failures, check the mail provider's delivery log before sending again.
 - To add or rotate a staff account, run `npm run staff:create -- USER ROLE ABSOLUTE_STAFF_FILE`. To revoke an account, run `npm run staff:remove -- USER ABSOLUTE_STAFF_FILE`. Restart the service to apply changes and revoke existing sessions.

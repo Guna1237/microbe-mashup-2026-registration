@@ -5,7 +5,7 @@ import { resolve, join, isAbsolute } from 'node:path';
 import { isIP } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { basicFee, batches, events, workshops, states, registration, emailAddress, InputError } from './event.mjs';
+import { basicFee, basicRates, batches, events, workshops, states, activities, activitySelection, registration, emailAddress, InputError } from './event.mjs';
 import { createAdmin, installAdminSchema, previewPassword, rejectionReasons } from './admin.mjs';
 import { readStaff, previewStaff } from './staff.mjs';
 import { createBackup } from './ops.mjs';
@@ -106,6 +106,19 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS job_leases (
     name TEXT PRIMARY KEY, worker TEXT NOT NULL, expires INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS registration_members (
+    ref TEXT NOT NULL REFERENCES orders(ref), attendee INTEGER NOT NULL UNIQUE REFERENCES attendees(seq),
+    PRIMARY KEY(ref,attendee)
+  );
+  CREATE TABLE IF NOT EXISTS activity_items (
+    ref TEXT NOT NULL REFERENCES orders(ref), attendee INTEGER NOT NULL REFERENCES attendees(seq),
+    activity TEXT NOT NULL, fee INTEGER NOT NULL, details TEXT,
+    PRIMARY KEY(attendee,activity)
+  );
+  CREATE INDEX IF NOT EXISTS activity_items_ref ON activity_items(ref);
+  CREATE VIEW IF NOT EXISTS summit_roster AS
+    SELECT ref, owner AS attendee FROM orders WHERE product='summit'
+    UNION ALL SELECT ref, attendee FROM registration_members;
 `);
 installAdminSchema(db);
 if (preflight) {
@@ -162,6 +175,9 @@ function uid(seq) { return 'MMSPH-' + String(seq).padStart(3, '0'); }
 function secret() { return randomBytes(24).toString('base64url'); }
 function orderFor(seq, product) { return get('SELECT * FROM orders WHERE owner=? AND product=?', seq, product); }
 function attendee(seq) { return get('SELECT * FROM attendees WHERE seq=?', seq); }
+function basicOrderFor(seq) {
+  return get('SELECT o.* FROM summit_roster s JOIN orders o ON o.ref=s.ref WHERE s.attendee=?', seq);
+}
 function newOrder(seq, product, amount) {
   run('INSERT INTO orders (ref,owner,product,amount,token) VALUES (?,?,?,?,?)',
     'MM26-' + randomBytes(12).toString('hex'), seq, product, amount, secret());
@@ -169,11 +185,12 @@ function newOrder(seq, product, amount) {
 }
 
 const workshopFor = (id) => workshops.find((entry) => entry.id === id);
-const orderLabel = (product) => product === 'summit' ? 'Summit registration' : workshopFor(product).name;
+const orderLabel = (product) => product === 'summit' ? 'Basic Registration'
+  : product.startsWith('activities:') ? 'Events & Workshops'
+  : workshopFor(product)?.name || 'Activity registration';
 const statusUrl = (order) => publicUrl + '/#payment=' + order.token;
-const invitation = (person) => publicUrl + '/#workshops=' + person.invite;
-function queue(order, template, subject, body) {
-  const person = attendee(order.owner);
+const invitation = (person) => publicUrl + '/activities#access=' + person.invite;
+function queue(order, template, subject, body, person = attendee(order.owner)) {
   run('INSERT OR IGNORE INTO mail (id,recipient,subject,body) VALUES (?,?,?,?)',
     order.ref + '/' + template, person.email, "Microbe Mashup ’26 | " + subject + ' | ' + uid(person.seq),
     'Hello ' + JSON.parse(person.details).name + ',\n\n' + body +
@@ -183,14 +200,14 @@ function queue(order, template, subject, body) {
 function acknowledge(order) {
   queue(order, 'received', orderLabel(order.product) + ' received',
     'Your ' + orderLabel(order.product).toLowerCase() + ' request has been received.\n' +
-    'Registration ID: ' + uid(order.owner) + '\n' +
     'Payment and status: ' + statusUrl(order) + '\n\n' +
-    'Your place is confirmed after payment is verified.');
+    (order.product === 'summit' ? 'Each participant will receive their Registration ID after payment is verified.'
+      : 'Your activities are confirmed after payment is verified.'));
 }
 
 function sendCorrection(order, reason) {
   queue(order, 'correction-' + order.utr + '-' + reason, 'Payment reference needs attention',
-    rejectionReasons[reason] + '\n\nRegistration ID: ' + uid(order.owner) +
+    rejectionReasons[reason] + '\n\n' +
     '\nPayment and status: ' + statusUrl(order));
 }
 
@@ -204,14 +221,24 @@ function recordConfirmation(order) {
     const change = run("UPDATE orders SET state='paid', paid_at=? WHERE ref=? AND state<>'paid'", Date.now(), order.ref);
     if (!change.changes) return;
     const label = orderLabel(order.product);
-    const intro = label + ' is confirmed.\nRegistration ID: ' + uid(order.owner) + '\n' +
-      'Amount received: INR ' + order.amount / 100 + '\n';
     const guidelines = '\n11–12 December 2026 · Mamata Academy of Medical Sciences, Bachupally, Hyderabad\n' +
       'Arrive 30 minutes before reporting time. Bring your college ID, registration ID and any materials required for your activities. ' +
       'Follow staff instructions and maintain professional conduct. Check @microbemashup for updates.\n';
-    const summitDetails = '\nBook workshops with your personal link: ' + invitation(attendee(order.owner)) + '\n' +
-      (whatsapp ? '\nOfficial WhatsApp group: ' + whatsapp + '\n' : '') + guidelines;
-    queue(order, 'paid', label + ' confirmed', intro + (order.product === 'summit' ? summitDetails : guidelines));
+    if (order.product === 'summit') {
+      const people = all('SELECT a.* FROM summit_roster s JOIN attendees a ON a.seq=s.attendee WHERE s.ref=?', order.ref);
+      for (const person of people) {
+        queue(order, 'paid-' + person.seq, label + ' confirmed',
+          'Your Basic Registration is confirmed.\nRegistration ID: ' + uid(person.seq) +
+          '\n\nUse your Registration ID and this personal link to book Events & Workshops: ' + invitation(person) + '\n' +
+          (whatsapp ? '\nOfficial WhatsApp group: ' + whatsapp + '\n' : '') + guidelines, person);
+      }
+      return;
+    }
+    const booked = all('SELECT activity FROM activity_items WHERE ref=? ORDER BY activity', order.ref)
+      .map(({ activity }) => activities.find(({ id }) => id === activity)?.name).filter(Boolean);
+    queue(order, 'paid', label + ' confirmed',
+      label + ' payment is confirmed.\nRegistration ID: ' + uid(order.owner) +
+      '\nAmount received: INR ' + order.amount / 100 + (booked.length ? '\nBooked: ' + booked.join(', ') + '\n' : '\n') + guidelines);
 }
 
 function normalizeUtr(value) {
@@ -423,8 +450,8 @@ function bearer(req) { return (req.headers.authorization || '').replace(/^Bearer
 function authorizedAttendee(req) {
   const token = bearer(req);
   const person = validToken(token) && get('SELECT * FROM attendees WHERE invite=?', token);
-  if (!person || orderFor(person.seq, 'summit')?.state !== 'paid') {
-    throw new InputError('Open the workshop link from your confirmed summit email.');
+  if (!person || basicOrderFor(person.seq)?.state !== 'paid') {
+    throw new InputError('Open the personal link from your confirmed Basic Registration email.');
   }
   return person;
 }
@@ -437,8 +464,12 @@ function authorizedOrder(req) {
 
 function summary(order) {
   const manualOrder = manual && !order.link_id;
+  const basic = order.product === 'summit';
+  const confirmedBasic = basic && order.state === 'paid';
   return {
-    participantId: uid(order.owner), product: order.product, label: orderLabel(order.product),
+    participantId: !basic || confirmedBasic ? uid(order.owner) : null, product: order.product, label: orderLabel(order.product),
+    partySize: basic ? get('SELECT COUNT(*) AS count FROM summit_roster WHERE ref=?', order.ref).count : 1,
+    items: all('SELECT activity FROM activity_items WHERE ref=? ORDER BY activity', order.ref).map(({ activity }) => activity),
     amount: order.amount / 100, state: order.state,
     checkout: !demo && order.state === 'pending' ? order.link_url : null,
     token: order.token,
@@ -446,7 +477,7 @@ function summary(order) {
     orderReference: manualOrder ? order.ref : null,
     utr: manualOrder ? get('SELECT utr FROM manual_receipts WHERE ref=?', order.ref)?.utr ?? null : null,
     reviewMessage: manualOrder ? rejectionReasons[get('SELECT reason FROM payment_reviews WHERE ref=?', order.ref)?.reason] || null : null,
-    workshopToken: order.state === 'paid' && order.product === 'summit' ? attendee(order.owner).invite : null,
+    workshopToken: confirmedBasic ? attendee(order.owner).invite : null,
   };
 }
 
@@ -469,7 +500,7 @@ function importPaid(file, sendInvites) {
       const existing = get('SELECT * FROM attendees WHERE email=? OR seq=?', email, seq);
       let order;
       if (existing) {
-        order = orderFor(seq, 'summit');
+        order = basicOrderFor(seq);
         if (existing.email !== email || existing.seq !== seq || order?.state !== 'paid' ||
             order.amount !== row.amountPaise || order.link_id) throw new Error('Roster conflict at ' + uid(seq));
       } else {
@@ -481,8 +512,8 @@ function importPaid(file, sendInvites) {
         imported++;
       }
       if (sendInvites) {
-        queue(order, 'import-invite', 'Your workshop registration link', 'Your summit payment is already verified.\n' +
-          'Registration ID: ' + uid(seq) + '\n' + 'Book workshops: ' + invitation(attendee(seq)));
+        queue(order, 'import-invite', 'Your Events & Workshops link', 'Your Basic Registration payment is already verified.\n' +
+          'Registration ID: ' + uid(seq) + '\n' + 'Book Events & Workshops: ' + invitation(attendee(seq)));
       }
     }
     return imported;
@@ -502,47 +533,93 @@ if (process.argv[2] === 'verify-payment') {
 }
 
 function begin(body) {
-  const { details, amount } = registration(body);
+  const { people, amount } = registration(body);
   return atomic(() => {
-    const email = emailAddress(details.email);
-    if (get('SELECT seq FROM attendees WHERE email=?', email)) return null;
     if (!isOpen('summit')) throw new InputError('Summit registration is paused. Existing registrations can still be paid.');
-    const result = run('INSERT INTO attendees (email,details,invite,created) VALUES (?,?,?,?)',
-      email, JSON.stringify(details), secret(), Date.now());
-    const order = newOrder(result.lastInsertRowid, 'summit', amount);
+    if (people.some(({ email }) => get('SELECT 1 FROM attendees WHERE email=?', email))) return null;
+    const ids = people.map((details) => run('INSERT INTO attendees (email,details,invite,created) VALUES (?,?,?,?)',
+      details.email, JSON.stringify(details), secret(), Date.now()).lastInsertRowid);
+    const order = newOrder(ids[0], 'summit', amount);
+    for (const id of ids.slice(1)) run('INSERT INTO registration_members(ref,attendee) VALUES (?,?)', order.ref, id);
     acknowledge(order);
     return order;
   });
 }
 
-function beginWorkshop(req, body) {
+function activityAttendee(req, registrationId) {
   const person = authorizedAttendee(req);
-  const item = workshopFor(body.product);
-  if (!item) throw new InputError('Select a workshop.');
+  if (typeof registrationId !== 'string' || registrationId.trim().toUpperCase() !== uid(person.seq)) {
+    throw new InputError('Enter the Registration ID from the email that contains this link.');
+  }
+  return person;
+}
+
+function bookedActivities(person) {
+  const orders = all("SELECT * FROM orders WHERE owner=? AND product<>'summit' AND state IN ('pending','paid')", person.seq);
+  const legacy = JSON.parse(person.details).events || [];
+  return {
+    legacy,
+    orders: orders.map((order) => {
+      const payment = summary(order);
+      return { ...payment, items: payment.items.length ? payment.items : [order.product] };
+    }),
+  };
+}
+
+function beginActivities(req, body) {
+  const person = activityAttendee(req, body.registrationId);
+  const { items, team } = activitySelection(body, JSON.parse(person.details));
   return atomic(() => {
-    const existing = orderFor(person.seq, item.id);
-    if (existing) return existing;
-    if (!isOpen('workshops')) throw new InputError('New workshop bookings are paused. Existing bookings can still be paid.');
-    return newOrder(person.seq, item.id, item.fee * 100);
+    const prior = bookedActivities(person);
+    const requested = items.map(({ id }) => id);
+    const repeat = prior.orders.find((order) => order.items.length === requested.length && requested.every((id) => order.items.includes(id)));
+    if (repeat) return repeat.token;
+    if (!isOpen('workshops')) throw new InputError('New activity bookings are paused. Existing orders can still be paid.');
+    if (requested.some((id) => prior.legacy.includes(id) || prior.orders.some((order) => order.items.includes(id)))) {
+      throw new InputError('An activity in this selection is already booked. Refresh to view your bookings.');
+    }
+    // Expired or cancelled Razorpay links release their activity claims before a new order is created.
+    run("DELETE FROM activity_items WHERE attendee=? AND ref IN (SELECT ref FROM orders WHERE owner=? AND state IN ('expired','cancelled'))", person.seq, person.seq);
+    const order = newOrder(person.seq, 'activities:' + secret().slice(0, 16), items.reduce((sum, item) => sum + item.fee * 100, 0));
+    for (const item of items) {
+      run('INSERT INTO activity_items(ref,attendee,activity,fee,details) VALUES(?,?,?,?,?)',
+        order.ref, person.seq, item.id, item.fee * 100, item.id === 'mayhem' ? JSON.stringify(team) : null);
+    }
+    acknowledge(order);
+    return order.token;
   });
+}
+
+function sendActivityAccess(body) {
+  const email = emailAddress(body.email);
+  const id = typeof body.registrationId === 'string' ? body.registrationId.trim().toUpperCase() : '';
+  const person = /^MMSPH-\d{3,8}$/.test(id) && get('SELECT * FROM attendees WHERE email=?', email);
+  if (!person || uid(person.seq) !== id) return;
+  const order = basicOrderFor(person.seq);
+  if (order?.state !== 'paid') return;
+  queue(order, 'activity-access-' + person.seq + '-' + Math.floor(Date.now() / (15 * 60000)), 'Your Events & Workshops link',
+    'Registration ID: ' + id + '\n\nOpen your personal booking link: ' + invitation(person), person);
 }
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
+  ...['/basic-registration', '/activities', '/brochure', '/location'].map((path) => [path, ['index.html', 'text/html; charset=utf-8']]),
   ['/site.css', ['site.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/admin', ['admin.html', 'text/html; charset=utf-8']],
   ['/admin.css', ['admin.css', 'text/css; charset=utf-8']],
   ['/admin.js', ['admin.js', 'text/javascript; charset=utf-8']],
   ['/event-logo.webp', ['event-logo.webp', 'image/webp']],
+  ['/event-logo-transparent.webp', ['event-logo-transparent.webp', 'image/webp']],
   ['/college-logo.webp', ['college-logo.webp', 'image/webp']],
 ]);
 const headers = {
   'cache-control': 'no-store',
   'referrer-policy': 'no-referrer',
   'x-content-type-options': 'nosniff',
-  'content-security-policy': "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'content-security-policy': "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; frame-src https://maps.google.com https://www.google.com",
 };
+const brochure = new URL('./public/summit-brochure.pdf', import.meta.url);
 function clientIp(req) {
   const socketIp = req.socket.remoteAddress || 'unknown';
   const forwarded = req.headers['x-forwarded-for']?.split(',')[0]?.trim();
@@ -598,9 +675,14 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
       res.writeHead(200, { 'content-type': 'image/png' });
       return res.end(qr);
     }
+    if (method === 'GET' && pathname === '/summit-brochure.pdf' && existsSync(brochure)) {
+      res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': 'inline; filename="summit-brochure.pdf"' });
+      return res.end(readFileSync(brochure));
+    }
     if (method === 'GET' && pathname === '/api/catalog') {
       return json(res, 200, { demo, razorpayTest, manual, upiId: launchHold ? '' : upiId, payee: launchHold ? '' : payee,
-        hasQr: Boolean(qr) && !launchHold, basicFee, batches, events, states, workshops, summitOpen: isOpen('summit'), launchHold });
+        hasQr: Boolean(qr) && !launchHold, basicFee, basicRates, batches, events, states, workshops,
+        hasBrochure: existsSync(brochure), activitiesOpen: isOpen('workshops'), summitOpen: isOpen('summit'), launchHold });
     }
     if (method === 'POST' && pathname === '/api/register') {
       if (!allowRegistration(req)) {
@@ -611,16 +693,18 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
       const order = begin(body);
       return json(res, 200, order ? { token: order.token } : { existing: true });
     }
-    if (pathname === '/api/workshops' && method === 'GET') {
-      const person = authorizedAttendee(req);
-      return json(res, 200, {
-        participantId: uid(person.seq), workshopsOpen: isOpen('workshops'),
-        orders: all("SELECT * FROM orders WHERE owner=? AND product<>'summit'", person.seq).map(summary),
-      });
+    if (method === 'POST' && pathname === '/api/activities/access') {
+      if (!allowRegistration(req)) return json(res, 429, { error: 'Too many attempts. Try again in one minute.' });
+      sendActivityAccess(await read(req));
+      return json(res, 200, { ok: true });
     }
-    if (pathname === '/api/workshops' && method === 'POST') {
-      const order = beginWorkshop(req, await read(req));
-      return json(res, 200, { token: order.token });
+    if (method === 'POST' && pathname === '/api/activities/unlock') {
+      const { registrationId } = await read(req);
+      const person = activityAttendee(req, registrationId);
+      return json(res, 200, { batch: JSON.parse(person.details).batch, activitiesOpen: isOpen('workshops'), ...bookedActivities(person) });
+    }
+    if (method === 'POST' && pathname === '/api/activities') {
+      return json(res, 200, { token: beginActivities(req, await read(req)) });
     }
     if (pathname === '/api/payment' && method === 'GET') {
       return json(res, 200, summary(authorizedOrder(req)));

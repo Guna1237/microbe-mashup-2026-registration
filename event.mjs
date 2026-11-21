@@ -8,6 +8,7 @@ function fee(name, fallback) {
 }
 
 export const basicFee = fee('BASIC_FEE', 800);
+export const basicRates = { 1: basicFee, 3: 750, 4: 750, 5: 700 };
 
 export const batches = [
   { id: 'mbbs24', name: '2k24 MBBS', competition: true },
@@ -65,51 +66,74 @@ export function emailAddress(value) {
   return email;
 }
 
-export function registration(body) {
+function participant(body) {
+  if (!body || typeof body !== 'object') throw new InputError('Enter the details for every participant.');
   const batch = batches.find(({ id }) => id === body.batch);
   if (!batch) throw new InputError('Select your batch.');
-  if (!states.includes(body.state)) throw new InputError('Select your state or union territory.');
   if (!['Veg', 'Non-veg'].includes(body.meal)) throw new InputError('Select a meal preference.');
-  if (body.consent !== true) throw new InputError('Accept the registration data notice.');
-  if (!Array.isArray(body.events) || body.events.length > events.length ||
-      body.events.some((id) => !events.some((event) => event.id === id))) {
-    throw new InputError('Select valid competition options.');
-  }
-  const eventIds = [...new Set(body.events)];
-  if (!batch.competition && eventIds.length) {
-    throw new InputError('This batch can register for the summit and workshops. Competitions are restricted to 2k24 and 2k25 MBBS.');
-  }
-  const pincode = field(body, 'pincode', 'PIN code', 6);
-  if (!/^[1-9]\d{5}$/.test(pincode)) throw new InputError('Enter a six-digit PIN code.');
   const details = {
     name: field(body, 'name', 'full name').toUpperCase(),
     email: emailAddress(body.email),
     phone: phone(field(body, 'phone', 'phone number', 24)),
     batch: batch.id,
-    state: body.state,
-    city: field(body, 'city', 'city'),
-    pincode,
     college: field(body, 'college', 'college name', 180).toUpperCase(),
-    collegeCity: field(body, 'collegeCity', 'college city'),
     meal: body.meal,
-    events: eventIds,
   };
-  if (eventIds.includes('mayhem')) {
-    const team = body.team && typeof body.team === 'object' ? body.team : {};
-    if (!['leader', 'member'].includes(team.role)) throw new InputError('Select your Microbe Mayhem team role.');
-    details.team = { name: field(team, 'name', 'team name').toUpperCase(), role: team.role };
+  for (const [key, label] of [['city','city'], ['collegeCity','college city']]) {
+    if (body[key]) details[key] = field(body, key, label);
+  }
+  if (body.state) {
+    if (!states.includes(body.state)) throw new InputError('Select your state or union territory.');
+    details.state = body.state;
+  }
+  if (body.pincode) {
+    const pincode = field(body, 'pincode', 'PIN code', 6);
+    if (!/^[1-9]\d{5}$/.test(pincode)) throw new InputError('Enter a six-digit PIN code.');
+    details.pincode = pincode;
+  }
+  return details;
+}
+
+export function registration(body) {
+  if (body.consent !== true) throw new InputError('Accept the registration data notice.');
+  if (body.events?.length) throw new InputError('Book events separately after Basic Registration.');
+  const members = body.members === undefined ? [body] : body.members;
+  if (!Array.isArray(members) || !Object.hasOwn(basicRates, members.length)) {
+    throw new InputError('Register individually or choose a group of 3, 4 or 5.');
+  }
+  if (members.length > 1 && body.groupConsent !== true) throw new InputError('Confirm you can share the group members’ details.');
+  const people = members.map(participant);
+  if (new Set(people.map(({ email }) => email)).size !== people.length) {
+    throw new InputError('Use a different email address for each participant.');
+  }
+  return { people, amount: basicRates[people.length] * people.length * 100 };
+}
+
+export const activities = [...events.map((item) => ({ ...item, type: 'event' })),
+  ...workshops.map((item) => ({ ...item, type: 'workshop' }))];
+
+export function activitySelection(body, person) {
+  if (!Array.isArray(body.items) || !body.items.length || body.items.length > activities.length ||
+      new Set(body.items).size !== body.items.length) throw new InputError('Select one or more activities.');
+  const items = body.items.map((id) => activities.find((item) => item.id === id));
+  if (items.some((item) => !item)) throw new InputError('Select valid activities.');
+  if (items.some(({ type }) => type === 'event') && !batches.find(({ id }) => id === person.batch)?.competition) {
+    throw new InputError('This batch can book workshops. Competitions are open to 2k24 and 2k25 MBBS.');
+  }
+  let team;
+  if (body.items.includes('mayhem')) {
+    const input = body.team || {};
+    if (!['leader', 'member'].includes(input.role)) throw new InputError('Select your Microbe Mayhem team role.');
+    team = { name: field(input, 'name', 'team name').toUpperCase(), role: input.role };
     if (team.role === 'leader') {
-      if (team.permission !== true) throw new InputError('Confirm permission to share your teammates’ details.');
-      details.team.members = [
-        { name: details.name, phone: details.phone },
-        { name: field(team, 'member2', 'second team member’s name').toUpperCase(), phone: phone(field(team, 'phone2', 'second member’s phone', 24)) },
-        { name: field(team, 'member3', 'third team member’s name').toUpperCase(), phone: phone(field(team, 'phone3', 'third member’s phone', 24)) },
+      if (input.permission !== true) throw new InputError('Confirm permission to share your teammates’ details.');
+      team.members = [
+        { name: person.name, phone: person.phone },
+        { name: field(input, 'member2', 'second team member’s name').toUpperCase(), phone: phone(field(input, 'phone2', 'second member’s phone', 24)) },
+        { name: field(input, 'member3', 'third team member’s name').toUpperCase(), phone: phone(field(input, 'phone3', 'third member’s phone', 24)) },
       ];
-      if (new Set(details.team.members.map((member) => member.phone)).size !== 3) {
-        throw new InputError('Enter a different phone number for each team member.');
-      }
+      if (new Set(team.members.map((member) => member.phone)).size !== 3) throw new InputError('Enter a different phone number for each team member.');
     }
   }
-  const amount = 100 * (basicFee + events.filter(({ id }) => eventIds.includes(id)).reduce((total, event) => total + event.fee, 0));
-  return { details, amount };
+  return { items, team };
 }

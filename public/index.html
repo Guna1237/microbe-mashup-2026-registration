@@ -3,57 +3,94 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Register for Microbe Mashup ’26, the two-day student summit from the Department of Microbiology at Mamata Academy of Medical Sciences.">
-  <title>Microbe Mashup ’26 · Registration</title>
+  <meta name="description" content="Register for Microbe Mashup ’26, the two-day student summit at Mamata Academy of Medical Sciences.">
+  <title>Microbe Mashup ’26 · Student Summit</title>
   <link rel="stylesheet" href="/site.css">
   <script src="/app.js" type="module"></script>
 </head>
 <body>
-  <a class="skip" href="#form-area">Skip to registration</a>
+  <a class="skip" href="#main-content">Skip to content</a>
   <header class="mast">
     <div class="wrap mast-inner">
       <a class="wordmark" href="/" aria-label="Microbe Mashup home">
         <img class="mark" src="/college-logo.webp" alt="" width="144" height="174">
         <span>Mamata Academy of Medical Sciences<small>Department of Microbiology</small></span>
       </a>
-      <a class="mast-contact" href="mailto:mams.microbemashup@gmail.com">Contact organizers</a>
+      <nav class="mast-nav" aria-label="Summit information">
+        <a href="/brochure">Summit Brochure</a>
+        <a href="/location">Location</a>
+        <a class="mast-contact" href="mailto:mams.microbemashup@gmail.com">Contact Organizers</a>
+      </nav>
     </div>
   </header>
-  <main>
-    <section class="hero">
-      <div class="wrap hero-content">
-        <div class="hero-text">
-          <p class="eyebrow">Two-day student summit</p>
-          <h1>Microbe<br><em>Mashup</em> ’26</h1>
-          <p class="where"><strong>11–12 December 2026</strong><span>Mamata Academy of Medical Sciences<br>Bachupally, Hyderabad</span></p>
-          <a class="button hero-action" href="#register">Register for the summit</a>
-        </div>
-        <div class="hero-art"><img class="event-art" src="/event-logo.webp" alt="" width="760" height="760" fetchpriority="high"></div>
-      </div>
-    </section>
-    <div class="wrap layout" id="form-area">
-      <section class="workspace" id="register" aria-labelledby="page-title">
-        <nav class="mode" id="mode-links" aria-label="Registration forms">
-          <a href="#register" id="register-tab">Summit registration</a>
-          <a href="#workshops" id="workshop-tab">Workshops</a>
-        </nav>
-        <div class="panel">
-          <p class="demo" id="demo" hidden>Local preview · Test payments only</p>
-          <div id="screen" aria-live="off"><h2 id="page-title">Loading registration…</h2></div>
-          <p role="status" id="notice" hidden></p>
+  <main id="main-content">
+    <div id="home">
+      <section class="hero">
+        <div class="wrap hero-content">
+          <div class="hero-text">
+            <p class="eyebrow">Two-day student summit</p>
+            <h1><span>Microbe</span><span><em>Mashup</em> ’26</span></h1>
+            <p class="where"><strong>11–12 December 2026</strong><span>Mamata Academy of Medical Sciences<br>Bachupally, Hyderabad</span></p>
+            <div class="hero-actions">
+              <a class="button hero-action" href="/basic-registration">Basic Registration</a>
+              <a class="button hero-secondary" href="/activities">Events &amp; Workshops</a>
+            </div>
+          </div>
+          <div class="hero-art"><img class="event-art" src="/event-logo-transparent.webp" alt="Microbe Mashup ’26 event logo" width="900" height="900" fetchpriority="high"></div>
         </div>
       </section>
-      <aside class="help">
-        <h2>Before you register</h2>
-        <p>One summit registration per attendee. Use an email you can access for your registration ID and payment confirmation.</p>
-        <h3>Workshops</h3>
-        <p>Book workshops from the personal link in your confirmed summit email. Workshop fees are paid separately.</p>
-        <div class="organizer">
-          <h3>Organizer email</h3>
-          <a href="mailto:mams.microbemashup@gmail.com">mams.microbemashup@gmail.com</a>
+      <section class="wrap guidelines" aria-labelledby="guidelines-title">
+        <div class="guidelines-heading">
+          <h2 id="guidelines-title">Registration Guidelines</h2>
+          <p>Complete Basic Registration first. Use the Registration ID sent to your email to book Events &amp; Workshops.</p>
         </div>
-      </aside>
+        <div class="guidelines-grid">
+          <section class="guideline">
+            <h3>1. Basic Registration</h3>
+            <ul>
+              <li>Basic registration is mandatory for everyone and costs <strong>₹800 per person</strong> for individual registration.</li>
+              <li>Fill out the Basic Registration form with your personal and contact details.</li>
+              <li>After payment is confirmed, each participant receives a unique Registration ID by email.</li>
+            </ul>
+          </section>
+          <section class="guideline">
+            <h3>2. Group Registration</h3>
+            <ul>
+              <li>Register individually or as a group of 3, 4 or 5. One group leader completes registration for everyone.</li>
+              <li>The leader enters the name, phone number and email of each member, including their own details.</li>
+              <li>Groups of 3–4 pay <strong>₹750 per person</strong>. Groups of 5 pay <strong>₹700 per person</strong>.</li>
+              <li>Each person receives their own Registration ID by email and should keep it for further registrations.</li>
+            </ul>
+          </section>
+          <section class="guideline">
+            <h3>3. Events &amp; Workshops Registration</h3>
+            <ul>
+              <li>Use the separate Events &amp; Workshops form after Basic Registration is confirmed.</li>
+              <li>Enter your own Registration ID from your confirmation email to proceed. This also applies to every group member.</li>
+            </ul>
+          </section>
+          <section class="guideline">
+            <h3>4. Important Instructions</h3>
+            <ul>
+              <li>Check that all personal and contact details are accurate, especially email addresses.</li>
+              <li>Use your own Registration ID for later bookings and check your registered email for updates.</li>
+              <li>For registration queries, <a href="mailto:mams.microbemashup@gmail.com">contact the organizing committee</a>.</li>
+            </ul>
+          </section>
+        </div>
+      </section>
     </div>
+    <section class="wrap flow-shell" id="form-area" aria-labelledby="page-title" hidden>
+      <nav class="flow-nav" aria-label="Registration steps">
+        <a href="/basic-registration" data-flow="/basic-registration"><span>1</span> Basic Registration</a>
+        <a href="/activities" data-flow="/activities"><span>2</span> Events &amp; Workshops</a>
+      </nav>
+      <div class="workspace panel">
+        <p class="demo" id="demo" hidden>Local preview · Test payments only</p>
+        <div id="screen"><h2 id="page-title">Loading…</h2></div>
+        <p role="status" id="notice" hidden></p>
+      </div>
+    </section>
   </main>
   <footer class="wrap footer">Microbe Mashup ’26 · Bachupally, Hyderabad</footer>
 </body>

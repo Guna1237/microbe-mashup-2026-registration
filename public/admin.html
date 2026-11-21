@@ -49,6 +49,7 @@
       </section>
       <nav class="admin-nav" aria-label="Organizer dashboard views">
         <button type="button" class="secondary" data-tab="orders">Orders &amp; check-in</button>
+        <button type="button" class="secondary" data-tab="activity-summary">Event &amp; workshop roster</button>
         <button type="button" class="secondary" data-tab="mail">Email queue</button>
         <button type="button" class="secondary" data-tab="audit">Activity log</button>
       </nav>
@@ -59,6 +60,8 @@
             <option value="review">Needs payment review</option>
             <option value="unpaid">Awaiting payment</option>
             <option value="paid">Paid orders</option>
+            <option value="basic">Basic Registration orders</option>
+            <option value="activities">Events &amp; Workshops orders</option>
             <option value="check-in">Summit check-in</option>
             <option value="all">All orders</option>
           </select></label>
@@ -67,12 +70,17 @@
           </label>
           <button class="secondary" type="submit">Search</button>
         </form>
+        <div class="actions" id="activity-filter" hidden><span id="activity-filter-label"></span><button type="button" class="secondary" id="clear-activity-filter">Clear activity filter</button></div>
         <div id="order-list" class="order-list" aria-live="polite"></div>
         <div class="pager">
           <button class="secondary" type="button" id="prev">Previous</button>
           <span id="page"></span>
           <button class="secondary" type="button" id="next">Next</button>
         </div>
+      </section>
+      <section id="activity-summary" class="admin-card admin-view" aria-labelledby="activity-summary-heading" hidden>
+        <header class="view-heading"><div><h2 id="activity-summary-heading">Event &amp; workshop roster</h2><p>See confirmed seats and bookings awaiting payment for each activity.</p></div><button type="button" class="secondary" data-refresh>Refresh</button></header>
+        <div id="activity-summary-list" class="order-list"></div>
       </section>
       <section id="mail" class="admin-card admin-view" aria-labelledby="mail-heading" hidden>
         <header class="view-heading"><div><h2 id="mail-heading">Email queue</h2><p>Monitor pending sends and retry recent failures.</p></div><button type="button" class="secondary" data-refresh>Refresh</button></header>

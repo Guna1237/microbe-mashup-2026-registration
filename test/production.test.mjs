@@ -160,9 +160,9 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     await frontDesk('admin/check-in', 200, { ref, checkedIn: true });
     const ws = api(base, { token: paid.workshopToken });
     await owner('admin/controls', 200, { name: 'workshops', open: false });
-    await ws('workshops', 400, { product: 'ipc' });
+    await ws('activities', 400, { items: ['ipc'], registrationId: paid.participantId });
     await owner('admin/controls', 200, { name: 'workshops', open: true });
-    const workshop = (await ws('workshops', 200, { product: 'ipc' })).data;
+    const workshop = (await ws('activities', 200, { items: ['ipc'], registrationId: paid.participantId })).data;
     const workshopStatus = api(base, { token: workshop.token });
     await workshopStatus('payment/reference', 400, { utr: '111122223334' });
     const workshopReceipt = (await workshopStatus('payment/reference', 200, { utr: '111122223335' })).data;
@@ -200,6 +200,86 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     for (const stop of cleanup) await stop();
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
     assert.ok(basename(root).startsWith('mashup-production-'));
+    rmSync(root, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 });
+  }
+});
+
+test('group passes issue individual IDs and activity checkout uses the correct identity', { timeout: 30000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mashup-group-'));
+  let stop;
+  try {
+    const env = { ...process.env, DEMO: '1', RAZORPAY_TEST: '0', PAYMENT_MODE: 'manual',
+      JOB_MODE: 'cron', DEMO_DATA_DIR: root, STAFF_FILE: '', ADMIN_PASSWORD: '',
+      MAIL_PAUSED: '0', WHATSAPP_URL: '', LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '',
+    };
+    const base = await boot(env, (fn) => { stop = fn; });
+    const call = (token, cookie) => (path, status, body) => api(base, { token, cookie })(path, status, body, { origin: base });
+    const guest = call();
+    const { headers } = await guest('admin/login', 200, { user: 'organizer', password: 'mashup-local-preview-only' });
+    const owner = call(undefined, headers.get('set-cookie').split(';')[0]);
+    const membersFor = (size, prefix) => Array.from({ length: size }, (_, index) => ({
+      ...attendee, name: prefix + ' Member ' + (index + 1), email: prefix + index + '@example.test',
+      batch: index === 1 ? 'bds24' : 'mbbs24',
+    }));
+    await guest('register', 400, { members: membersFor(2, 'invalid'), consent: true, groupConsent: true });
+    const trio = membersFor(3, 'trio');
+    await guest('register', 400, { members: [trio[0], trio[0], trio[1]], consent: true, groupConsent: true });
+    const group = (await guest('register', 200, { members: trio, consent: true, groupConsent: true })).data;
+    const leaderPayment = call(group.token);
+    const pending = (await leaderPayment('payment', 200)).data;
+    assert.equal(pending.amount, 2250);
+    assert.equal(pending.partySize, 3);
+    assert.equal(pending.participantId, null);
+    assert.equal(pending.workshopToken, null);
+    const receipt = (await leaderPayment('payment/reference', 200, { utr: '333333444444' })).data;
+    await owner('admin/verify', 200, { ref: receipt.orderReference, utr: receipt.utr, amount: 2250, matched: true });
+    run(['server.mjs', 'jobs:drain'], env);
+    const messages = readFileSync(join(root, 'outbox.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    const confirmations = messages.filter(({ subject }) => subject.includes('confirmed'));
+    assert.equal(confirmations.length, 3);
+    const ids = confirmations.map((mail) => ({
+      id: /Registration ID: (MMSPH-\d+)/.exec(mail.text)[1],
+      token: /#access=([A-Za-z0-9_-]+)/.exec(mail.text)[1],
+      email: mail.to,
+    }));
+    assert.equal(new Set(ids.map(({ id }) => id)).size, 3);
+    assert.equal(new Set(ids.map(({ token }) => token)).size, 3);
+    const person = ids.find(({ email }) => email === trio[0].email);
+    const member = ids.find(({ email }) => email === trio[1].email);
+    await guest('activities/unlock', 400, { registrationId: person.id });
+    await call(person.token)('activities/unlock', 400, { registrationId: member.id });
+    await call(member.token)('activities/unlock', 200, { registrationId: member.id });
+    await call(member.token)('activities', 400, { registrationId: member.id, items: ['quiz'] });
+    const selected = { registrationId: person.id, items: ['quiz', 'ipc'] };
+    const result = (await call(person.token)('activities', 200, selected)).data;
+    assert.equal((await call(person.token)('activities', 200, selected)).data.token, result.token);
+    await call(person.token)('activities', 400, { registrationId: person.id, items: ['ipc', 'beyond'] });
+    const paidActivities = call(result.token);
+    const activityReceipt = (await paidActivities('payment/reference', 200, { utr: '888888444444' })).data;
+    assert.equal(activityReceipt.amount, 2750);
+    await owner('admin/verify', 200, { ref: activityReceipt.orderReference, utr: activityReceipt.utr, amount: 2750, matched: true });
+    const checkin = (await owner('admin/orders?view=check-in&q=' + member.id, 200)).data.rows;
+    assert.equal(checkin[0].attendeeId, member.id);
+    await owner('admin/check-in', 200, { ref: receipt.orderReference, attendeeId: member.id, checkedIn: true });
+    const report = (await owner('admin/activity-summary', 200)).data.entries;
+    assert.equal(report.find(({ id }) => id === 'ipc').paid, 1);
+    assert.equal(report.find(({ id }) => id === 'quiz').paid, 1);
+    const checkinRows = (await owner('admin/orders?view=check-in', 200)).data.rows;
+    assert.equal(checkinRows.length, 3);
+    assert.equal(checkinRows.filter(({ checkedInAt }) => checkedInAt).length, 1);
+    for (const [size, total] of [[4, 3000], [5, 3500]]) {
+      const created = (await guest('register', 200, { members: membersFor(size, 'set' + size), consent: true, groupConsent: true })).data;
+      assert.equal((await call(created.token)('payment', 200)).data.amount, total);
+    }
+    await guest('activities/access', 200, { registrationId: person.id, email: person.email });
+    await guest('activities/access', 200, { registrationId: person.id, email: person.email });
+    run(['server.mjs', 'jobs:drain'], env);
+    const mail = readFileSync(join(root, 'outbox.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(mail.filter(({ subject }) => subject.includes('Your Events & Workshops link')).length, 1);
+  } finally {
+    if (stop) await stop();
+    assert.equal(dirname(resolve(root)), resolve(tmpdir()));
+    assert.ok(basename(root).startsWith('mashup-group-'));
     rmSync(root, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 });
   }
 });

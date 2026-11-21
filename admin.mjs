@@ -1,6 +1,6 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { InputError } from './event.mjs';
+import { InputError, activities } from './event.mjs';
 
 export const previewPassword = 'mashup-local-preview-only';
 const deriveKey = promisify(scrypt);
@@ -10,11 +10,12 @@ export const rejectionReasons = {
   'wrong-account': 'The organizers could not match this payment to the event account. Contact the organizers before paying again.',
 };
 
-const listSql = ` FROM orders o
-  JOIN attendees a ON a.seq=o.owner
+const joins = `
   LEFT JOIN manual_receipts r ON r.ref=o.ref
   LEFT JOIN check_ins c ON c.attendee=a.seq
   LEFT JOIN payment_reviews v ON v.ref=o.ref`;
+const listSql = ' FROM orders o JOIN attendees a ON a.seq=o.owner' + joins;
+const checkInSql = ' FROM orders o JOIN summit_roster s ON s.ref=o.ref JOIN attendees a ON a.seq=s.attendee' + joins;
 const selectSql = `SELECT o.ref, o.product, o.state, o.amount, o.paid_at, a.seq, a.created,
   a.email, a.details, r.utr, r.submitted_at, c.checked_in_at, v.reason`;
 
@@ -77,27 +78,52 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
 
   function stats() {
     const counts = get(`SELECT
-      COUNT(CASE WHEN product='summit' THEN 1 END) AS registrations,
-      COUNT(CASE WHEN product='summit' AND state='paid' THEN 1 END) AS summitPaid,
-      COUNT(CASE WHEN product<>'summit' AND state='paid' THEN 1 END) AS workshopPaid,
+      (SELECT COUNT(*) FROM summit_roster) AS registrations,
+      (SELECT COUNT(*) FROM summit_roster s JOIN orders p ON p.ref=s.ref WHERE p.state='paid') AS summitPaid,
       COALESCE(SUM(CASE WHEN state='paid' THEN amount END), 0) AS received
       FROM orders`);
+    const report = activityReport();
+    const workshopPaid = report.filter(({ type }) => type === 'workshop').reduce((sum, row) => sum + row.paid, 0);
+    const eventPaid = report.filter(({ type }) => type === 'event').reduce((sum, row) => sum + row.paid, 0);
     const review = get(`SELECT COUNT(*) AS count FROM orders o JOIN manual_receipts r ON r.ref=o.ref
       WHERE o.state='pending' AND o.link_id IS NULL`).count;
     const checkedIn = get('SELECT COUNT(*) AS count FROM check_ins').count;
     const mail = get(`SELECT COUNT(CASE WHEN sent IS NULL THEN 1 END) AS queued,
       COUNT(CASE WHEN sent IS NULL AND error IS NOT NULL THEN 1 END) AS issues FROM mail`);
-    return { ...counts, review, checkedIn, mail };
+    return { ...counts, review, checkedIn, mail, workshopPaid, eventPaid };
   }
 
-  function mapRow(row, full = false) {
+  function activityReport() {
+    const counts = all(`SELECT b.activity AS id, o.state, COUNT(*) AS count
+      FROM activity_items b JOIN orders o ON o.ref=b.ref
+      WHERE o.state IN ('paid','pending') GROUP BY b.activity,o.state
+      UNION ALL SELECT product AS id, state, COUNT(*) FROM orders
+      WHERE product IN ('ipc','antibiotic','beyond') AND state IN ('paid','pending') GROUP BY product,state`);
+    return activities.map(({ id, name, type }) => ({
+      id, name, type,
+      paid: counts.filter((row) => row.id === id && row.state === 'paid').reduce((sum, row) => sum + row.count, 0),
+      pending: counts.filter((row) => row.id === id && row.state === 'pending').reduce((sum, row) => sum + row.count, 0),
+    }));
+  }
+
+  function mapRow(row, full = false, includeGroup = true) {
     const details = JSON.parse(row.details);
+    const selections = all('SELECT activity,details FROM activity_items WHERE ref=? ORDER BY activity', row.ref).map(({ activity, details: itemDetails }) => ({
+      name: activities.find(({ id }) => id === activity)?.name || activity,
+      ...(full && itemDetails ? { team: JSON.parse(itemDetails) } : {}),
+    }));
+    const members = includeGroup && row.product === 'summit'
+      ? all(`SELECT a.seq, json_extract(a.details,'$.name') AS name FROM registration_members g
+        JOIN attendees a ON a.seq=g.attendee WHERE g.ref=? ORDER BY a.seq`, row.ref)
+        .map(({ seq, name }) => ({ name, attendeeId: uid(seq) }))
+      : [];
     return {
       ref: row.ref, attendeeId: uid(row.seq), name: details.name, email: row.email,
       batch: details.batch, product: row.product, label: orderLabel(row.product),
       state: row.state, amount: row.amount / 100, utr: row.utr, reason: row.reason,
       submittedAt: row.submitted_at, paidAt: row.paid_at, checkedInAt: row.checked_in_at,
       createdAt: row.created, ...(full ? { details } : {}),
+      selections, members,
     };
   }
 
@@ -108,23 +134,34 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
     const knownViews = new Map([
       ['review', "o.state='pending' AND r.utr IS NOT NULL AND o.link_id IS NULL"],
       ['unpaid', "o.state='pending'"], ['paid', "o.state='paid'"],
+      ['basic', "o.product='summit'"], ['activities', "o.product<>'summit'"],
       ['check-in', "o.product='summit' AND o.state='paid'"], ['all', '1=1'],
     ]);
     if (!knownViews.has(view)) throw new InputError('Choose a valid view.');
     const page = Math.min(10000, Math.max(1, Math.trunc(Number(url.searchParams.get('page'))) || 1));
     const limit = 25;
+    const roster = view === 'check-in';
+    const activity = !roster ? url.searchParams.get('activity') : null;
+    if (activity && !activities.some(({ id }) => id === activity)) throw new InputError('Choose a valid activity.');
     const extra = checkin ? '' : ' OR instr(lower(a.email),?) OR instr(lower(o.ref),?) OR instr(lower(r.utr),?)';
+    const groupSearch = roster ? '' : ` OR EXISTS (
+      SELECT 1 FROM registration_members g JOIN attendees m ON m.seq=g.attendee
+      WHERE g.ref=o.ref AND (instr(lower(m.email),?) OR instr(lower(json_extract(m.details,'$.name')),?)
+        OR instr(lower(printf('MMSPH-%03d',m.seq)),?)))`;
     const where = ' WHERE ' + knownViews.get(view) + `
       AND (?='' OR instr(lower(json_extract(a.details,'$.name')),?)
-      OR instr(lower(printf('MMSPH-%03d', a.seq)),?)` + extra + ')';
-    const params = checkin ? [q, q, q] : [q, q, q, q, q, q];
-    const total = get('SELECT COUNT(*) AS count ' + listSql + where, ...params).count;
-    const rows = all(selectSql + listSql + where +
-      ' ORDER BY COALESCE(r.submitted_at,a.created) DESC,o.ref LIMIT ? OFFSET ?', ...params, limit, (page - 1) * limit);
+      OR instr(lower(printf('MMSPH-%03d', a.seq)),?)` + extra + groupSearch + ')' +
+      (activity ? ' AND (o.product=? OR EXISTS (SELECT 1 FROM activity_items b WHERE b.ref=o.ref AND b.activity=?))' : '');
+    const params = Array(checkin ? 3 : roster ? 6 : 9).fill(q);
+    if (activity) params.push(activity, activity);
+    const source = roster ? checkInSql : listSql;
+    const total = get('SELECT COUNT(*) AS count ' + source + where, ...params).count;
+    const rows = all(selectSql + source + where +
+      ' ORDER BY COALESCE(r.submitted_at,a.created) DESC,o.ref,a.seq LIMIT ? OFFSET ?', ...params, limit, (page - 1) * limit);
     const results = rows.map((row) => {
-      if (!checkin) return mapRow(row);
+      if (!checkin && !roster) return mapRow(row);
       return { ref: row.ref, attendeeId: uid(row.seq), name: JSON.parse(row.details).name, product: 'summit',
-        label: 'Summit registration', state: 'paid', checkedInAt: row.checked_in_at };
+        label: 'Basic Registration', state: 'paid', checkedInAt: row.checked_in_at };
     });
     return { rows: results, page, pages: Math.max(1, Math.ceil(total / limit)), total };
   }
@@ -150,7 +187,9 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
   function checkIn(body, actor) {
     if (typeof body.ref !== 'string' || typeof body.checkedIn !== 'boolean') throw new InputError('Choose a check-in action.');
     return atomic(() => {
-      const order = get("SELECT owner FROM orders WHERE ref=? AND product='summit' AND state='paid'", body.ref);
+      const order = get(`SELECT s.attendee AS owner FROM summit_roster s JOIN orders o ON o.ref=s.ref
+        WHERE s.ref=? AND o.state='paid' AND ((? IS NULL AND s.attendee=o.owner) OR printf('MMSPH-%03d',s.attendee)=?)`,
+        body.ref, typeof body.attendeeId === 'string' ? body.attendeeId : null, typeof body.attendeeId === 'string' ? body.attendeeId : null);
       if (!order) throw new InputError('Only verified summit attendees can be checked in.');
       const result = body.checkedIn
         ? run('INSERT OR IGNORE INTO check_ins(attendee,checked_in_at) VALUES (?,?)', order.owner, Date.now())
@@ -220,6 +259,10 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
           manual, demo: local, mailPaused: owner && mailPaused, launchHold: owner && launchHold, user, role });
       }
       if (pathname === '/api/admin/orders') return json(res, 200, queue(url, role));
+      if (pathname === '/api/admin/activity-summary') {
+        if (!mayReview) return forbidden();
+        return json(res, 200, { entries: activityReport() });
+      }
       if (pathname === '/api/admin/audit') {
         if (!owner) return forbidden();
         return json(res, 200, { entries: all('SELECT action,target,detail,created_at,actor FROM organizer_audit ORDER BY id DESC LIMIT 50') });
@@ -233,7 +276,10 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
         if (!owner) return forbidden();
         audit('roster-exported', 'roster', '', user);
         res.setHeader('content-disposition', 'attachment; filename="microbe-mashup-roster.json"');
-        return json(res, 200, all(selectSql + listSql + ' ORDER BY a.seq,o.product').map((row) => mapRow(row, true)));
+        const orders = all(selectSql + listSql + ' ORDER BY a.seq,o.product').map((row) => mapRow(row, true));
+        const members = all(selectSql + checkInSql + " WHERE o.product='summit' AND a.seq<>o.owner ORDER BY a.seq")
+          .map((row) => ({ ...mapRow(row, true, false), amount: 0, coveredByGroupPayment: true }));
+        return json(res, 200, [...orders, ...members]);
       }
     }
     if (req.method === 'POST') {

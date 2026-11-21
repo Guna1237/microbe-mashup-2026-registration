@@ -8,6 +8,7 @@ let page = 1;
 let ticket = 0;
 let paymentAction;
 let staffRole;
+let activityFilter;
 
 function node(tag, text, className) {
   const result = document.createElement(tag);
@@ -50,7 +51,8 @@ function showLogin(message = '') {
   if (review.open) review.close();
   byId('loading').hidden = true;
   byId('dashboard').hidden = true;
-  for (const id of ['order-list', 'mail-list', 'audit-list', 'review-fields']) byId(id).replaceChildren();
+  for (const id of ['order-list', 'mail-list', 'audit-list', 'activity-summary-list', 'review-fields']) byId(id).replaceChildren();
+  activityFilter = undefined;
   filters.reset();
   page = 1;
   paymentAction = undefined;
@@ -80,11 +82,12 @@ async function refreshDashboard() {
   byId('view-filter').hidden = checkin;
   filters.elements.q.placeholder = checkin ? 'Name or attendee ID' : 'Name, email, attendee ID, or UTR';
   document.querySelector('[data-tab=audit]').hidden = !owner;
+  document.querySelector('[data-tab=activity-summary]').hidden = checkin;
   const mailButton = document.querySelector('[data-tab=mail]');
   mailButton.hidden = !owner;
   const metrics = checkin ? [['Paid summit attendees', overview.summitPaid], ['Checked in', overview.checkedIn]] : [
-    ['Summit paid', overview.summitPaid + ' / ' + overview.registrations],
-    ['Needs review', overview.review], ['Workshops paid', overview.workshopPaid],
+    ['Basic participants paid', overview.summitPaid + ' / ' + overview.registrations],
+    ['Needs review', overview.review], ['Activity bookings paid', overview.workshopPaid + overview.eventPaid],
     ['Checked in', overview.checkedIn], ['Recorded payments', money.format(overview.received / 100)],
   ];
   byId('metrics').replaceChildren(...metrics.map(([label, value]) => {
@@ -92,7 +95,7 @@ async function refreshDashboard() {
     card.append(node('span', label), node('strong', value));
     return card;
   }));
-  const controls = owner ? Object.entries({ summit: 'Summit', workshops: 'Workshops' }).map(([key, label]) => {
+  const controls = owner ? Object.entries({ summit: 'Basic Registration', workshops: 'Events & Workshops' }).map(([key, label]) => {
     const open = overview.controls[key];
     const button = action(label + (open ? ' open · Pause' : ' paused · Reopen'), async () => {
       await change('controls', { name: key, open: !open });
@@ -123,6 +126,9 @@ function renderOrder(order) {
   person.append(node('h3', order.name + ' · ' + order.attendeeId));
   if (order.email) person.append(node('p', order.email));
   person.append(node('p', order.label));
+  if (order.members?.length) person.append(node('p', 'Group of ' + (order.members.length + 1) + ' · ' +
+    order.members.map(({ name, attendeeId }) => name + ' (' + attendeeId + ')').join(', ')));
+  if (order.selections?.length) person.append(node('p', order.selections.map(({ name }) => name).join(', ')));
   const payment = node('div');
   const paid = order.state === 'paid';
   let status = 'Awaiting payment';
@@ -139,7 +145,7 @@ function renderOrder(order) {
   } else if (paid && order.product === 'summit' && staffRole !== 'payments') {
     controls.append(action(order.checkedInAt ? 'Undo check-in' : 'Check in', async () => {
       if (order.checkedInAt && !confirm('Undo check-in for ' + order.attendeeId + '?')) return;
-      await change('check-in', { ref: order.ref, checkedIn: !order.checkedInAt });
+      await change('check-in', { ref: order.ref, attendeeId: order.attendeeId, checkedIn: !order.checkedInAt });
     }, !order.checkedInAt));
   }
   item.append(person, payment, controls);
@@ -151,6 +157,11 @@ async function refreshView() {
   const tab = currentTab;
   if (tab === 'orders') {
     const data = new URLSearchParams({ view: filters.elements.view.value, q: filters.elements.q.value, page });
+    byId('activity-filter').hidden = !activityFilter;
+    if (activityFilter) {
+      data.set('activity', activityFilter.id);
+      byId('activity-filter-label').textContent = activityFilter.name;
+    }
     const result = await api('orders?' + data);
     if (id !== ticket) return;
     if (page > result.pages) { page = result.pages; return refreshView(); }
@@ -169,7 +180,20 @@ async function refreshView() {
     const item = node('article', undefined, 'order-item');
     const main = node('div');
     const meta = node('div');
-    if (tab === 'mail') {
+    if (tab === 'activity-summary') {
+      main.append(node('h3', entry.name), node('p', entry.type === 'event' ? 'Event' : 'Workshop'));
+      meta.append(node('span', entry.paid + ' confirmed · ' + entry.pending + ' awaiting payment', 'queue-status'));
+      const buttons = node('div', undefined, 'actions');
+      buttons.append(action('View bookings', () => {
+        activityFilter = { id: entry.id, name: entry.name };
+        filters.elements.view.value = 'activities';
+        filters.elements.q.value = '';
+        page = 1;
+        return pickTab('orders');
+      }));
+      item.append(main, meta, buttons);
+      return item;
+    } else if (tab === 'mail') {
       main.append(node('h3', entry.subject), node('p', entry.recipient));
       meta.append(node('p', entry.error || 'Queued for sending'));
       if (entry.error && (!entry.first_attempt || Date.now() - entry.first_attempt < 23 * 3600000)) {
@@ -276,7 +300,8 @@ document.querySelectorAll('[data-refresh]').forEach((button) => button.addEventL
   await Promise.all([refreshDashboard(), refreshView()]);
 })));
 filters.addEventListener('submit', (event) => { event.preventDefault(); page = 1; guarded(refreshView)(); });
-filters.elements.view.addEventListener('change', () => { page = 1; guarded(refreshView)(); });
+filters.elements.view.addEventListener('change', () => { activityFilter = undefined; page = 1; guarded(refreshView)(); });
+byId('clear-activity-filter').addEventListener('click', guarded(() => { activityFilter = undefined; page = 1; return refreshView(); }));
 byId('prev').addEventListener('click', guarded(() => { page--; return refreshView(); }));
 byId('next').addEventListener('click', guarded(() => { page++; return refreshView(); }));
 byId('review-close').addEventListener('click', () => review.close());
