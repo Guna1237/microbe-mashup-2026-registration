@@ -1,6 +1,6 @@
 import './config.mjs';
 import { createServer } from 'node:http';
-import { mkdirSync, readFileSync, appendFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, appendFileSync, existsSync, statSync, createReadStream } from 'node:fs';
 import { resolve, join, isAbsolute } from 'node:path';
 import { isIP } from 'node:net';
 import { randomBytes } from 'node:crypto';
@@ -97,6 +97,10 @@ const activityConfirmationEmail = mailAll || Boolean(whatsapp);
 
 const dir = resolve(demo ? env.DEMO_DATA_DIR || 'demo-data' : razorpayTest ? 'razorpay-test-data' : env.DATA_DIR || 'data');
 if (preflight && local) throw new Error('Set DEMO=0 and RAZORPAY_TEST=0 to run the production preflight.');
+const brochure = env.BROCHURE_FILE || new URL('./public/summit-brochure.pdf', import.meta.url);
+if (env.BROCHURE_FILE && (!isAbsolute(env.BROCHURE_FILE) || !statSync(brochure, { throwIfNoEntry: false })?.isFile())) {
+  throw new Error('BROCHURE_FILE must be an absolute path to the summit PDF.');
+}
 const dbPath = join(dir, 'mashup.sqlite');
 if ((backup || exporting || oneShotJobs) && !existsSync(dbPath)) {
   throw new Error('The event database was not found at the configured location.');
@@ -765,7 +769,32 @@ const headers = {
   'x-content-type-options': 'nosniff',
   'content-security-policy': "default-src 'self'; img-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; frame-src https://maps.google.com https://www.google.com",
 };
-const brochure = new URL('./public/summit-brochure.pdf', import.meta.url);
+function serveBrochure(req, res) {
+  const { size } = statSync(brochure);
+  const headers = { 'content-type': 'application/pdf', 'content-disposition': 'inline; filename="summit-brochure.pdf"',
+    'accept-ranges': 'bytes', 'cache-control': 'public, max-age=300' };
+  if (req.method === 'HEAD') {
+    res.writeHead(200, { ...headers, 'content-length': size });
+    return res.end();
+  }
+  const range = /^bytes=(?=\d|-\d)(\d*)-(\d*)$/.exec(req.headers.range || '');
+  let start = 0;
+  let end = size - 1;
+  if (range) {
+    start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    if (range[1] && range[2]) end = Math.min(end, Number(range[2]));
+    if (start >= size || end < start) {
+      res.writeHead(416, { ...headers, 'content-range': 'bytes */' + size });
+      return res.end();
+    }
+    headers['content-range'] = 'bytes ' + start + '-' + end + '/' + size;
+  }
+  res.writeHead(range ? 206 : 200, { ...headers, 'content-length': end - start + 1 });
+  const stream = createReadStream(brochure, { start, end });
+  stream.once('error', () => res.destroy());
+  res.once('close', () => stream.destroy());
+  stream.pipe(res);
+}
 function clientIp(req) {
   const socketIp = req.socket.remoteAddress || 'unknown';
   const forwarded = req.headers['x-forwarded-for']?.split(',')[0]?.trim();
@@ -823,9 +852,8 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
       res.writeHead(200, { 'content-type': 'image/png' });
       return res.end(qr);
     }
-    if (method === 'GET' && ['/brochure-document', '/summit-brochure.pdf'].includes(pathname) && existsSync(brochure)) {
-      res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': 'inline; filename="summit-brochure.pdf"' });
-      return res.end(readFileSync(brochure));
+    if ((method === 'GET' || method === 'HEAD') && ['/brochure-document', '/summit-brochure.pdf'].includes(pathname) && existsSync(brochure)) {
+      return serveBrochure(req, res);
     }
     if (method === 'GET' && pathname === '/api/catalog') {
       return json(res, 200, { demo, razorpayTest, manual, activityConfirmationEmail, basicFee, basicRates, batches, events, states, workshops,

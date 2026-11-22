@@ -290,7 +290,7 @@ function showActivitySelection(id, state, version) {
 function showInfo(path) {
   if (path === '/brochure') {
     show(title('Summit Brochure') + '<p class="intro">Microbe Mashup ’26 · 11–12 December 2026</p>' +
-      (catalog.hasBrochure ? '<a class="button" href="/brochure-document" target="_blank" rel="noopener">Open brochure PDF</a>' :
+      (catalog.hasBrochure ? '<p>Check the registration checkout for current fees.</p><a class="button" href="/brochure-document" target="_blank" rel="noopener">Open brochure PDF</a>' :
         '<p>The official summit brochure will be added here when it’s available.</p>'));
     return;
   }

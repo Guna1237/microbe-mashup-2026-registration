@@ -96,6 +96,9 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
   try {
     const staffFile = join(root, 'staff.json');
     const testQr = join(root, 'test-qr.png');
+    const brochureFile = join(root, 'brochure.pdf');
+    const brochureBytes = Buffer.from('%PDF-1.7\nTest file transfer\n%%EOF\n');
+    writeFileSync(brochureFile, brochureBytes);
     writeFileSync(testQr, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'));
     const accounts = {};
     for (const [user, role] of [['event-owner', 'owner'], ['reviewer', 'payments'], ['front-desk', 'checkin']]) {
@@ -109,6 +112,7 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
       LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '', MASHUP_PUBLIC_URL: '',
       PRICES_CONFIRMED: 'true', STAFF_FILE: staffFile, PUBLIC_URL: origin, DATA_DIR: join(root, 'live'),
       BASIC_FEE: '800', IPC_FEE: '2500', ANTIBIOTIC_FEE: '2200', BEYOND_FEE: '4000',
+      BROCHURE_FILE: brochureFile,
       PAYMENT_MODE: 'manual', MANUAL_UPI_ID: 'test@example', MANUAL_PAYEE: 'QA only', MANUAL_QR_FILE: testQr,
       BREVO_API_KEY: 'unused-test-key', BREVO_SENDER_EMAIL: 'mail@example.test', MAIL_NOTICES: 'all', WHATSAPP_URL: '',
     };
@@ -119,6 +123,19 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     const guest = api(base);
     const publicRoutes = ['/basic-registration', '/activities', '/location', '/brochure'];
     for (const route of publicRoutes) assert.match(await (await fetch(base + route)).text(), /Registration Guidelines/);
+    assert.equal((await guest('catalog', 200)).data.hasBrochure, true);
+    const documentUrl = base + '/brochure-document';
+    const head = await fetch(documentUrl, { method: 'HEAD' });
+    assert.equal(head.headers.get('content-type'), 'application/pdf');
+    assert.equal(Number(head.headers.get('content-length')), brochureBytes.length);
+    const partial = await fetch(documentUrl, { headers: { range: 'bytes=0-7' } });
+    assert.equal(partial.status, 206);
+    assert.equal(partial.headers.get('content-range'), 'bytes 0-7/' + brochureBytes.length);
+    assert.deepEqual(Buffer.from(await partial.arrayBuffer()), brochureBytes.subarray(0, 8));
+    const suffix = await fetch(documentUrl, { headers: { range: 'bytes=-6' } });
+    assert.equal(suffix.status, 206);
+    assert.deepEqual(Buffer.from(await suffix.arrayBuffer()), brochureBytes.subarray(-6));
+    assert.equal((await fetch(documentUrl, { headers: { range: 'bytes=9999-' } })).status, 416);
     for (const [asset, type] of [['site-css', 'text/css'], ['registration-script', 'text/javascript'], ['event-mark', 'image/webp']]) {
       const response = await fetch(base + '/assets/summit/' + asset);
       assert.equal(response.status, 200);

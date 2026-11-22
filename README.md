@@ -7,7 +7,7 @@ Two forms on one website for the 11–12 December 2026 student summit hosted by 
 - **Payments** use organizer-verified UPI by default. Attendees enter their UPI reference, and organizers approve only after matching the settled payment against the receiving account. Razorpay is available as an optional alternative.
 - **Email** uses Brevo with a persistent queue. The payment page shows submission, verification and correction status. After verification, each Basic Registration participant gets their own ID and booking link by email. The Events & Workshops confirmation includes the configured WhatsApp invite after activity payment verification. Verified participants can request their link again. `MAIL_NOTICES=all` can send verified activity confirmations without a WhatsApp invite.
 
-Place the official Summit Brochure at `public/summit-brochure.pdf` and redeploy. The brochure page displays an availability message until that file is present.
+Set `BROCHURE_FILE` to the absolute path of the official Summit Brochure on the host. Local setups can place it at `public/summit-brochure.pdf`. The brochure page displays an availability message until a PDF is available.
 
 ## Preview
 
