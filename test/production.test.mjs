@@ -108,7 +108,7 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
       ...process.env, DEMO: '0', RAZORPAY_TEST: '0', MAIL_PAUSED: '1', TRUST_LOOPBACK_PROXY: '1',
       LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '', MASHUP_PUBLIC_URL: '',
       PRICES_CONFIRMED: 'true', STAFF_FILE: staffFile, PUBLIC_URL: origin, DATA_DIR: join(root, 'live'),
-      BASIC_FEE: '800', IPC_FEE: '2500', ANTIBIOTIC_FEE: '2200', BEYOND_FEE: '4999',
+      BASIC_FEE: '800', IPC_FEE: '2500', ANTIBIOTIC_FEE: '2200', BEYOND_FEE: '4000',
       PAYMENT_MODE: 'manual', MANUAL_UPI_ID: 'test@example', MANUAL_PAYEE: 'QA only', MANUAL_QR_FILE: testQr,
       BREVO_API_KEY: 'unused-test-key', BREVO_SENDER_EMAIL: 'mail@example.test', MAIL_NOTICES: 'all', WHATSAPP_URL: '',
     };
@@ -391,9 +391,31 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     assert.deepEqual(leader.selections[0].team.memberIds, [second.id, third.id]);
     assert.equal(mayhemRoster.find(({ attendeeId }) => attendeeId === second.id).selections[0].team.leaderId, person.id);
 
-    const selected = { registrationId: person.id, items: ['quiz', 'ipc'] };
+    const debateBooking = { registrationId: person.id, items: ['debate'],
+      teams: { debate: { role: 'leader', member2Id: second.id, side: 'FOR', permission: true } } };
+    await call(person.token)('activities', 400, {
+      ...debateBooking, teams: { debate: { ...debateBooking.teams.debate, side: 'MAYBE' } },
+    });
+    await call(person.token)('activities', 200, debateBooking);
+    await call(third.token)('activities', 400, { registrationId: third.id, items: ['debate'],
+      teams: { debate: { role: 'member', leaderId: person.id } } });
+    await call(second.token)('activities', 200, { registrationId: second.id, items: ['debate'],
+      teams: { debate: { role: 'member', leaderId: person.id, side: 'FOR' } } });
+    const debateRoster = (await owner('admin/orders?view=activities&activity=debate', 200)).data.rows;
+    assert.equal(debateRoster.find(({ attendeeId }) => attendeeId === person.id).selections[0].team.side, 'FOR');
+    assert.equal(debateRoster.find(({ attendeeId }) => attendeeId === second.id).selections[0].team.side, 'AGAINST');
+
+    const { data: workshopOrder } = await call(third.token)('activities', 200, {
+      registrationId: third.id, items: ['beyond'],
+    });
+    assert.equal((await call(workshopOrder.token)('payment', 200)).data.amount, 4000);
+
+    const selected = { registrationId: person.id, items: ['quiz', 'ipc'], teams: { quiz: team } };
+    await call(person.token)('activities', 400, { ...selected, teams: { quiz: { ...team, member3Id: undefined } } });
     const result = (await call(person.token)('activities', 200, selected)).data;
     assert.equal((await call(person.token)('activities', 200, selected)).data.token, result.token);
+    await call(second.token)('activities', 200, { registrationId: second.id, items: ['quiz'],
+      teams: { quiz: { role: 'member', leaderId: person.id } } });
     await call(person.token)('activities', 400, { registrationId: person.id, items: ['ipc', 'beyond'] });
     const paidActivities = call(result.token);
     const activityReceipt = (await paidActivities('payment/reference', 200, { utr: '888888444444', screenshot })).data;

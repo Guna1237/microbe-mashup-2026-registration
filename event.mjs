@@ -23,19 +23,19 @@ export const batches = [
 ];
 
 export const events = [
-  { id: 'quiz', name: 'Quiz', category: 'Active', fee: 250 },
-  { id: 'debate', name: 'Debate', category: 'Active', fee: 250 },
+  { id: 'quiz', name: 'Quiz', category: 'Team competition', fee: 250, teamSize: 3 },
+  { id: 'debate', name: 'Debate', category: 'Team competition', fee: 250, teamSize: 2, sides: ['FOR', 'AGAINST'] },
   { id: 'spell', name: 'Spell Bee', category: 'Active', fee: 250 },
   { id: 'poster', name: 'Poster Presentation', category: 'Passive', fee: 200 },
   { id: 'doodle', name: 'Doodling', category: 'Passive', fee: 200 },
   { id: 'fashion', name: 'Fashion Parade', category: 'Passive', fee: 200 },
-  { id: 'mayhem', name: 'Microbe Mayhem', category: 'Team competition', fee: 200 },
+  { id: 'mayhem', name: 'Microbe Mayhem', category: 'Team competition', fee: 200, teamSize: 3 },
 ];
 
 export const workshops = [
   { id: 'ipc', name: 'IPC in Action', description: 'Simulated ICU training', fee: fee('IPC_FEE', 2500) },
   { id: 'antibiotic', name: 'Antibiotic IQ', description: 'Know the Bug, Nail the Drug', fee: fee('ANTIBIOTIC_FEE', 2200) },
-  { id: 'beyond', name: 'Beyond the White Coat', description: 'An experiential workshop for medical students', fee: fee('BEYOND_FEE', 4999) },
+  { id: 'beyond', name: 'Beyond the White Coat', description: 'An experiential workshop for medical students', fee: fee('BEYOND_FEE', 4000) },
 ];
 
 export const states = [

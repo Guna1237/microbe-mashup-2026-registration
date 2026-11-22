@@ -209,6 +209,28 @@ function showActivityGate(token, version) {
 function showActivitySelection(id, state, version) {
   const eligible = catalog.batches.find((batch) => batch.id === state.batch)?.competition;
   const items = [...catalog.events, ...catalog.workshops];
+  const teamEvents = eligible ? catalog.events.filter(({ teamSize }) => teamSize) : [];
+  function teamFields({ id, name, teamSize, sides }) {
+    const field = (key) => id + '-' + key;
+    const teammate = (number, label) => input(field('member' + number + 'Id'), label + ' member MMSHP ID',
+      'placeholder="MMSHP-00' + number + '" maxlength="14" autocapitalize="characters"');
+    return `<fieldset class="team" data-team="${id}" disabled hidden>
+      <legend>${name} · team of ${teamSize}</legend>
+      <p class="hint">The leader enters the other ${teamSize === 2 ? 'member’s ID' : 'two members’ IDs'} first. Each member books and pays separately.${sides ? ' One member speaks FOR and the other AGAINST.' : ''}</p>
+      ${select(field('role'), 'Team role', [{ id: 'leader', name: 'Team leader' }, { id: 'member', name: 'Team member' }])}
+      <fieldset class="block" data-team-role="leader" disabled hidden>
+        <legend>Teammate Registration IDs</legend>
+        <p class="hint">Your own ID is already included.</p>
+        <div class="grid">${teammate(2, 'Second')}${teamSize === 3 ? teammate(3, 'Third') : ''}</div>
+        ${sides ? select(field('side'), 'Your Debate side', values(sides)) : ''}
+        <label class="consent"><input type="checkbox" name="${field('permission')}" required><span>I have permission to enter my teammates’ Registration IDs.</span></label>
+      </fieldset>
+      <fieldset class="block" data-team-role="member" disabled hidden>
+        <legend>Find your team</legend>
+        ${input(field('leaderId'), 'Team leader’s MMSHP ID', 'placeholder="MMSHP-001" maxlength="14" autocapitalize="characters"')}
+      </fieldset>
+    </fieldset>`;
+  }
   const itemById = (key) => items.find((item) => item.id === key);
   const reserved = new Set([...state.legacy, ...state.orders.flatMap((order) => order.items)]);
   const selectable = (item) => !reserved.has(item.id);
@@ -232,47 +254,35 @@ function showActivitySelection(id, state, version) {
       <form id="activities-form">
         ${eligible ? `<section class="block"><h3>Events</h3><div class="options">${options(catalog.events)}</div></section>` :
           '<p class="journey-note">Your batch can book workshops only. Events are open to 2k24 and 2k25 MBBS.</p>'}
-        <fieldset class="team" id="team" disabled hidden>
-          <legend>Microbe Mayhem team</legend>
-          <p class="hint">Each member books and pays separately. The team leader enters both teammates’ verified MMSHP IDs first.</p>
-          ${select('teamRole', 'Team role', [{ id: 'leader', name: 'Team leader' }, { id: 'member', name: 'Team member' }])}
-          <fieldset id="members" class="block" disabled hidden>
-            <legend>Teammate Registration IDs</legend>
-            <p class="hint">Your own ID is already included.</p>
-            <div class="grid">${input('member2Id', 'Second member Registration ID', 'placeholder="MMSHP-002" maxlength="14" autocapitalize="characters"')}
-              ${input('member3Id', 'Third member Registration ID', 'placeholder="MMSHP-003" maxlength="14" autocapitalize="characters"')}</div>
-            <label class="consent"><input type="checkbox" name="permission" required><span>I have permission to enter my teammates’ Registration IDs.</span></label>
-          </fieldset>
-          <fieldset id="leader-id" class="block" disabled hidden>
-            <legend>Find your team</legend>
-            ${input('leaderId', 'Team leader’s Registration ID', 'placeholder="MMSHP-001" maxlength="14" autocapitalize="characters"')}
-          </fieldset>
-        </fieldset>
+        ${teamEvents.map(teamFields).join('')}
         <section class="block"><h3>Workshops</h3><div class="options">${options(catalog.workshops)}</div></section>
         <div class="paybar"><div class="total"><span>Activity total</span><strong id="activities-total" aria-live="polite">${money(0)}</strong></div>
           <button type="submit" id="activities-next" disabled>Continue to payment</button></div>
       </form>` : '<p class="journey-note">New activity bookings are paused. Existing payments can still be completed.</p>'));
   const form = document.querySelector('#activities-form');
   if (!form) return;
-  const team = form.querySelector('#team');
-  const teammates = form.querySelector('#members');
-  const leaderId = form.querySelector('#leader-id');
   const selected = () => new FormData(form).getAll('items');
   form.addEventListener('change', () => {
     const choices = selected();
-    team.hidden = team.disabled = !choices.includes('mayhem');
-    teammates.hidden = teammates.disabled = team.disabled || form.elements.teamRole.value !== 'leader';
-    leaderId.hidden = leaderId.disabled = team.disabled || form.elements.teamRole.value !== 'member';
+    for (const section of form.querySelectorAll('[data-team]')) {
+      const eventId = section.dataset.team;
+      section.hidden = section.disabled = !choices.includes(eventId);
+      for (const fields of section.querySelectorAll('[data-team-role]')) {
+        fields.hidden = fields.disabled = section.disabled || fields.dataset.teamRole !== form.elements[eventId + '-role'].value;
+      }
+    }
     document.querySelector('#activities-total').textContent = money(choices.reduce((sum, item) => sum + itemById(item).fee, 0));
     document.querySelector('#activities-next').disabled = !choices.length;
   });
   bind(form, version, async () => {
-    const fields = Object.fromEntries(new FormData(form));
-    const result = await api('activities', { method: 'POST', token: accessToken, body: {
-      registrationId: id, items: selected(),
-      team: { role: fields.teamRole, leaderId: fields.leaderId, member2Id: fields.member2Id,
-        member3Id: fields.member3Id, permission: fields.permission === 'on' },
-    } });
+    const fields = new FormData(form);
+    const items = selected();
+    const teams = Object.fromEntries(teamEvents.filter(({ id }) => items.includes(id)).map(({ id }) => [id, {
+      role: fields.get(id + '-role'), leaderId: fields.get(id + '-leaderId'),
+      member2Id: fields.get(id + '-member2Id'), member3Id: fields.get(id + '-member3Id'),
+      side: fields.get(id + '-side'), permission: fields.has(id + '-permission'),
+    }]));
+    const result = await api('activities', { method: 'POST', token: accessToken, body: { registrationId: id, items, teams } });
     if (version === generation) location.hash = 'payment=' + result.token;
   });
 }

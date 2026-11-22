@@ -3,7 +3,7 @@
 Two forms on one website for the 11–12 December 2026 student summit hosted by the Department of Microbiology at Mamata Academy of Medical Sciences.
 
 - **Basic Registration** is mandatory. Individuals pay ₹800. Groups of four pay ₹720 per person (₹2,880 total). One leader submits the group details and pays once. After verification, every member receives their own `MMSHP-###` ID and private booking link.
-- **Events & Workshops** verifies the attendee’s private link and their own Registration ID. Eligible attendees can choose events, including Microbe Mayhem, and workshops. Mayhem team leaders list two teammates using their verified Registration IDs. Each teammate uses the leader’s ID to match their team and books separately. Selected activities share one checkout, with duplicate activity bookings prevented.
+- **Events & Workshops** verifies the attendee’s private link and their own Registration ID. Quiz and Microbe Mayhem use three-person teams. Debate uses two-person teams, one FOR and one AGAINST. Team leaders enter their teammates’ verified Registration IDs. Each teammate uses the leader’s ID to find the team and pays for their own booking. Selected activities share one checkout, with duplicate activity bookings prevented.
 - **Payments** use organizer-verified UPI by default. Attendees enter their UPI reference, and organizers approve only after matching the settled payment against the receiving account. Razorpay is available as an optional alternative.
 - **Email** uses Brevo with a persistent queue. The payment page shows submission, verification and correction status. After verification, each Basic Registration participant gets their own ID and booking link by email. The Events & Workshops confirmation includes the configured WhatsApp invite after activity payment verification. Verified participants can request their link again. `MAIL_NOTICES=all` can send verified activity confirmations without a WhatsApp invite.
 
@@ -56,7 +56,7 @@ The original form lists conflicting fee amounts. The preview follows the worksho
 | Summit | ₹800 | ₹799 |
 | IPC in Action | ₹2,500 | ₹2,200 |
 | Antibiotic IQ | ₹2,200 | ₹2,500 |
-| Beyond the White Coat | ₹4,999 | ₹5,000 |
+| Beyond the White Coat | ₹4,000 | ₹5,000 |
 
 The other competition fees follow the source form. The basic fee applies to all batches. 2k24 BDS, Final Year / Interns and Microbiology PGs skip competitions and can book workshops after summit payment. Confirm this reading of the source gate and confirm whether workshops have capacities or schedule conflicts before launch. This build does not enforce unprovided caps or schedules. Batch eligibility is based on the declared batch. Staff can check college ID at the venue.
 

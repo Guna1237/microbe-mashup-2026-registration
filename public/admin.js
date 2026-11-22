@@ -150,9 +150,12 @@ function renderOrder(order) {
     order.members.map(({ name, attendeeId }) => name + ' (' + attendeeId + ')').join(', ')));
   if (order.selections?.length) {
     person.append(node('p', order.selections.map(({ name }) => name).join(', ')));
-    const team = order.selections.find(({ team }) => team?.leaderId)?.team;
-    if (team) person.append(node('p', 'Mayhem leader: ' + team.leaderId +
-      (team.memberIds ? ' · Teammates: ' + team.memberIds.join(', ') : '')));
+    for (const { name, team } of order.selections) {
+      if (!team?.leaderId) continue;
+      person.append(node('p', name + ' leader: ' + team.leaderId +
+        (team.side ? ' · ' + team.side : '') +
+        (team.memberIds ? ' · Teammates: ' + team.memberIds.join(', ') : '')));
+    }
   }
   const payment = node('div');
   const paid = order.state === 'paid';
