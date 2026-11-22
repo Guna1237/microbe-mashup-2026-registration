@@ -27,6 +27,7 @@ body { margin: 0; }
 .mast-contact { color: var(--cyan); font-size: .875rem; font-weight: 650; text-decoration: none; white-space: nowrap; }
 .mast-nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 22px; }
 .mast-nav a { color: #e7f4ff; font-size: .875rem; font-weight: 650; text-decoration: none; }
+.mast-nav a.mast-home { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; border: 1px solid #59728d; border-radius: 7px; }
 .mast-nav a.mast-contact { color: var(--cyan); }
 .mast-nav a:hover, .mast-nav a[aria-current="page"] { color: var(--lime); }
 .hero {

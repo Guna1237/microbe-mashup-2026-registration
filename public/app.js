@@ -290,8 +290,11 @@ function showActivitySelection(id, state, version) {
 function showInfo(path) {
   if (path === '/brochure') {
     show(title('Summit Brochure') + '<p class="intro">Microbe Mashup ’26 · 11–12 December 2026</p>' +
-      (catalog.hasBrochure ? '<p>Check the registration checkout for current fees.</p><a class="button" href="/brochure-document" target="_blank" rel="noopener">Open brochure PDF</a>' :
-        '<p>The official summit brochure will be added here when it’s available.</p>'));
+      (catalog.hasBrochure ? '<p>Check the registration checkout for current fees.</p>' :
+        '<p>The official summit brochure will be added here when it’s available.</p>') +
+      '<div class="actions"><a class="button secondary" href="/">Back to Home</a>' +
+      (catalog.hasBrochure ? '<a class="button" href="/brochure-document" target="_blank" rel="noopener" aria-label="Open brochure PDF in a new tab">Open brochure PDF</a>' : '') +
+      '</div>');
     return;
   }
   show(title('Location') + `
@@ -502,7 +505,7 @@ async function route() {
   formArea.hidden = !page;
   formArea.querySelector('.flow-nav').hidden = !['/basic-registration', '/activities'].includes(path) && !payment;
   for (const link of document.querySelectorAll('[data-flow], .mast-nav a')) {
-    if (link.getAttribute('href') === path) link.setAttribute('aria-current', 'page');
+    if (link.getAttribute('href') === path && !(payment && path === '/')) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   }
   if (!page) return;
