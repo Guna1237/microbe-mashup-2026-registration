@@ -130,7 +130,7 @@ db.exec(`
     submitted_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS payment_proofs (
-    ref TEXT PRIMARY KEY REFERENCES manual_receipts(ref) ON DELETE CASCADE,
+    ref TEXT PRIMARY KEY REFERENCES orders(ref) ON DELETE CASCADE,
     mime TEXT NOT NULL CHECK(mime IN ('image/png','image/jpeg','image/webp')),
     image BLOB NOT NULL
   );
@@ -156,6 +156,25 @@ db.exec(`
 `);
 if (!db.prepare('PRAGMA table_info(mail)').all().some(({ name }) => name === 'send_provider')) {
   db.exec('ALTER TABLE mail ADD COLUMN send_provider TEXT');
+}
+if (db.prepare('PRAGMA foreign_key_list(payment_proofs)').get().table === 'manual_receipts') {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (db.prepare('PRAGMA foreign_key_list(payment_proofs)').get().table === 'manual_receipts') {
+      db.exec(`CREATE TABLE payment_proofs_next (
+        ref TEXT PRIMARY KEY REFERENCES orders(ref) ON DELETE CASCADE,
+        mime TEXT NOT NULL CHECK(mime IN ('image/png','image/jpeg','image/webp')),
+        image BLOB NOT NULL
+      );
+      INSERT INTO payment_proofs_next SELECT * FROM payment_proofs;
+      DROP TABLE payment_proofs;
+      ALTER TABLE payment_proofs_next RENAME TO payment_proofs;`);
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
 }
 installAdminSchema(db);
 db.exec(`DELETE FROM mail WHERE sent IS NULL AND
@@ -246,23 +265,24 @@ function confirm(order) {
 function recordConfirmation(order) {
     const change = run("UPDATE orders SET state='paid', paid_at=? WHERE ref=? AND state<>'paid'", Date.now(), order.ref);
     if (!change.changes) return;
-    const label = orderLabel(order.product);
+    const basic = order.product === 'summit';
     const guidelines = '\nSummit dates: 11–12 December 2026\n' +
       'Venue: Mamata Academy of Medical Sciences, Bachupally, Hyderabad\n' +
       'Check-in: Arrive 30 minutes before reporting time and bring your college ID and Registration ID.\n' +
       'Bring any materials required for your booked activities. Follow @microbemashup for updates.\n';
-    if (order.product === 'summit') {
+    if (basic) {
       const people = all('SELECT a.* FROM summit_roster s JOIN attendees a ON a.seq=s.attendee WHERE s.ref=?', order.ref);
       for (const person of people) {
-        queue(order, 'paid-' + person.seq, label + ' confirmed',
+        queue(order, 'paid-' + person.seq, 'Basic Registration confirmed',
           'Your Basic Registration is confirmed.\nRegistration ID: ' + uid(person.seq) +
           '\n\nUse your Registration ID and this personal link to book Events & Workshops: ' + invitation(person) + '\n' +
           guidelines, person);
       }
-      return;
     }
     if (!activityConfirmationEmail) return;
     const selections = all('SELECT activity,details FROM activity_items WHERE ref=? ORDER BY activity', order.ref);
+    if (basic && !selections.length) return;
+    const label = basic ? 'Events & Workshops' : orderLabel(order.product);
     const booked = selections.map(({ activity }) => activities.find(({ id }) => id === activity)?.name).filter(Boolean);
     const teamDetails = selections.flatMap(({ activity, details }) => {
       const team = JSON.parse(details || 'null');
@@ -275,7 +295,7 @@ function recordConfirmation(order) {
     });
     queue(order, 'paid', label + ' confirmed',
       label + ' payment is confirmed.\nRegistration ID: ' + uid(order.owner) +
-      '\nAmount received: INR ' + order.amount / 100 + (booked.length ? '\nBooked: ' + booked.join(', ') + '\n' : '\n') +
+      '\nAmount received: INR ' + order.amount / 100 + (basic ? ' (includes Basic Registration)' : '') + (booked.length ? '\nBooked: ' + booked.join(', ') + '\n' : '\n') +
       (teamDetails.length ? '\n' + teamDetails.join('\n') + '\n' : '') + '\nBooking status: ' + statusUrl(order) + '\n' +
       (whatsapp ? '\nOfficial Events & Workshops WhatsApp group: ' + whatsapp + '\n' : '') + guidelines);
 }
@@ -321,13 +341,21 @@ function verifyManual(ref, rawUtr, rawAmount, actor, submittedAt) {
   const utr = normalizeUtr(rawUtr);
   if (!Number.isSafeInteger(amount) || amount < 1) throw new InputError('Enter the whole-rupee amount received.');
   return atomic(() => {
-    const order = get(`SELECT o.*, r.utr, r.submitted_at FROM orders o JOIN manual_receipts r ON r.ref=o.ref WHERE o.ref=?`, ref);
-    if (!order || order.link_id || order.utr !== utr || order.amount !== amount * 100 ||
+    const order = get(`SELECT o.*, r.utr, r.submitted_at,
+      EXISTS (SELECT 1 FROM payment_proofs p WHERE p.ref=o.ref) AS has_proof
+      FROM orders o LEFT JOIN manual_receipts r ON r.ref=o.ref WHERE o.ref=?`, ref);
+    const needsReference = order?.has_proof && order.utr === null;
+    if (!order || order.link_id || (!needsReference && order.utr !== utr) || order.amount !== amount * 100 ||
         (submittedAt !== undefined && order.submitted_at !== submittedAt)) {
       throw new InputError('Order reference, submitted UPI reference, or exact amount did not match.');
     }
     if (order.state === 'paid') return 'Payment was already verified.';
     if (order.state !== 'pending') throw new InputError('This order cannot be verified.');
+    if (needsReference) {
+      const used = get('SELECT 1 FROM manual_receipts WHERE utr=?', utr);
+      if (used) throw new InputError('This UPI reference is already recorded for another payment.');
+      run('INSERT INTO manual_receipts(ref, utr, submitted_at) VALUES(?,?,?)', ref, utr, Date.now());
+    }
     recordConfirmation(order);
     audit('payment-verified', order.ref, utr + ' · INR ' + amount, actor);
     return order.product === 'summit' || activityConfirmationEmail
@@ -550,7 +578,8 @@ function summary(order) {
   const confirmedBasic = basic && order.state === 'paid';
   const utr = manualOrder ? get('SELECT utr FROM manual_receipts WHERE ref=?', order.ref)?.utr ?? null : null;
   const reviewMessage = manualOrder ? rejectionReasons[get('SELECT reason FROM payment_reviews WHERE ref=?', order.ref)?.reason] || null : null;
-  const payable = !launchHold && manualOrder && order.state === 'pending' && !utr && !reviewMessage;
+  const hasPaymentProof = manualOrder && Boolean(get('SELECT 1 FROM payment_proofs WHERE ref=?', order.ref));
+  const payable = !launchHold && manualOrder && order.state === 'pending' && !utr && !hasPaymentProof && !reviewMessage;
   return {
     participantId: !basic || confirmedBasic ? uid(order.owner) : null, product: order.product, label: orderLabel(order.product),
     partySize: basic ? get('SELECT COUNT(*) AS count FROM summit_roster WHERE ref=?', order.ref).count : 1,
@@ -560,7 +589,7 @@ function summary(order) {
     token: order.token,
     manual: manualOrder,
     orderReference: manualOrder ? order.ref : null,
-    utr, reviewMessage,
+    utr, hasPaymentProof, reviewMessage,
     paymentDetails: payable ? { upiId, payee, hasQr: Boolean(qr) } : null,
     workshopToken: confirmedBasic ? attendee(order.owner).invite : null,
   };

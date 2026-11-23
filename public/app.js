@@ -324,7 +324,7 @@ async function showPayment(token, version) {
     rendered = current;
     const paid = order.state === 'paid';
     const pending = order.state === 'pending';
-    const awaiting = pending && order.manual && order.utr;
+    const awaiting = pending && order.manual && (order.utr || order.hasPaymentProof);
     const activityNames = [...catalog.events, ...catalog.workshops]
       .filter((item) => order.items.includes(item.id)).map(({ name }) => name);
     show(title(paid ? 'Payment confirmed' : order.reviewMessage ? 'Payment reference needs attention' : awaiting || (pending && order.product === 'summit' && order.manual) ? 'Registration received' :

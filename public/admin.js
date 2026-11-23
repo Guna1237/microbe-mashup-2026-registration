@@ -161,7 +161,7 @@ function renderOrder(order) {
   const paid = order.state === 'paid';
   let status = 'Awaiting payment';
   if (paid) status = order.checkedInAt && order.product === 'summit' ? 'Checked in' : 'Paid';
-  else if (order.utr && order.state === 'pending') status = 'Needs review';
+  else if ((order.utr || order.hasProof) && order.state === 'pending') status = 'Needs review';
   else if (order.reason) status = 'Correction requested';
   else if (order.state !== 'pending') status = order.state;
   payment.append(node('span', status + (order.amount === undefined ? '' : ' · ' + money.format(order.amount)), 'queue-status' + (paid ? ' verified' : '')));
@@ -169,8 +169,9 @@ function renderOrder(order) {
   if (order.submittedAt) payment.append(node('p', 'Submitted ' + time.format(order.submittedAt)));
   if (staffRole !== 'checkin') payment.append(node('p', order.ref));
   const controls = node('div', undefined, 'actions');
-  if (!paid && order.utr && order.state === 'pending') {
-    controls.append(action('Verify', () => reviewPayment(order, false), true), action('Request correction', () => reviewPayment(order, true)));
+  if (!paid && (order.utr || order.hasProof) && order.state === 'pending') {
+    controls.append(action('Verify', () => reviewPayment(order, false), true));
+    if (order.utr) controls.append(action('Request correction', () => reviewPayment(order, true)));
   } else if (paid && order.product === 'summit' && staffRole !== 'payments') {
     controls.append(action(order.checkedInAt ? 'Undo check-in' : 'Check in', async () => {
       if (order.checkedInAt && !confirm('Undo check-in for ' + order.attendeeId + '?')) return;
@@ -273,7 +274,18 @@ function reviewPayment(order, reject, initialReason = '') {
   const amount = node('div');
   amount.append(node('small', 'Expected credit'), node('strong', money.format(order.amount)));
   const reference = node('div');
-  reference.append(node('small', 'UPI transaction reference'), paymentReference(order.utr));
+  if (order.utr) reference.append(node('small', 'UPI transaction reference'), paymentReference(order.utr));
+  else {
+    const label = node('label', 'UPI reference from the bank statement', 'field');
+    const input = node('input');
+    input.name = 'bankReference';
+    input.required = true;
+    input.minLength = 8;
+    input.maxLength = 30;
+    input.autocomplete = 'off';
+    label.append(input);
+    reference.append(label);
+  }
   comparison.append(amount, reference);
   const selections = order.selections?.length ? node('p', order.selections.map(({ name }) => name).join(', '), 'hint') : null;
   fields.replaceChildren(comparison);
@@ -313,7 +325,8 @@ function reviewPayment(order, reject, initialReason = '') {
     confirmation.append(box, node('span', 'I found this exact UPI reference and a settled credit of ' + money.format(order.amount) + ' in the receiving account.'));
     const correction = action('Amount differs', () => reviewPayment(order, true, 'wrong-amount'));
     correction.classList.add('payment-difference');
-    fields.append(confirmation, correction);
+    fields.append(confirmation);
+    if (order.utr) fields.append(correction);
   }
   if (!review.open) review.showModal();
   if (reject) fields.querySelector('select').focus();
@@ -360,7 +373,7 @@ byId('review-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const { order, reject } = paymentAction;
-  const body = { ref: order.ref, utr: order.utr, submittedAt: order.submittedAt };
+  const body = { ref: order.ref, utr: order.utr || form.elements.bankReference?.value, submittedAt: order.submittedAt };
   if (reject) body.reason = form.elements.reason.value;
   else { body.amount = order.amount; body.matched = form.elements.matched.checked; }
   withButton(byId('review-submit'), async () => {

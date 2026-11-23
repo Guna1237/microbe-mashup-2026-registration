@@ -20,7 +20,7 @@ const listSql = ' FROM orders o JOIN attendees a ON a.seq=o.owner' + joins;
 const checkInSql = ' FROM orders o JOIN summit_roster s ON s.ref=o.ref JOIN attendees a ON a.seq=s.attendee' + joins;
 const selectSql = `SELECT o.ref, o.product, o.state, o.amount, o.paid_at, a.seq, a.created,
   a.email, a.details, r.utr, r.submitted_at, c.checked_in_at, v.reason,
-  EXISTS (SELECT 1 FROM payment_proofs p WHERE p.ref=r.ref) AS has_proof`;
+  EXISTS (SELECT 1 FROM payment_proofs p WHERE p.ref=o.ref) AS has_proof`;
 
 export function installAdminSchema(db) {
   db.exec(`
@@ -88,8 +88,9 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
     const report = activityReport();
     const workshopPaid = report.filter(({ type }) => type === 'workshop').reduce((sum, row) => sum + row.paid, 0);
     const eventPaid = report.filter(({ type }) => type === 'event').reduce((sum, row) => sum + row.paid, 0);
-    const review = get(`SELECT COUNT(*) AS count FROM orders o JOIN manual_receipts r ON r.ref=o.ref
-      WHERE o.state='pending' AND o.link_id IS NULL`).count;
+    const review = get(`SELECT COUNT(*) AS count FROM orders o LEFT JOIN manual_receipts r ON r.ref=o.ref
+      WHERE o.state='pending' AND o.link_id IS NULL AND (r.utr IS NOT NULL OR
+        EXISTS (SELECT 1 FROM payment_proofs p WHERE p.ref=o.ref))`).count;
     const checkedIn = get('SELECT COUNT(*) AS count FROM check_ins').count;
     const mail = get(`SELECT COUNT(CASE WHEN sent IS NULL THEN 1 END) AS queued,
       COUNT(CASE WHEN sent IS NULL AND error IS NOT NULL THEN 1 END) AS issues FROM mail`);
@@ -138,7 +139,7 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
     const checkin = role === 'checkin';
     const view = checkin ? 'check-in' : url.searchParams.get('view') || 'review';
     const knownViews = new Map([
-      ['review', "o.state='pending' AND r.utr IS NOT NULL AND o.link_id IS NULL"],
+      ['review', "o.state='pending' AND o.link_id IS NULL AND (r.utr IS NOT NULL OR EXISTS (SELECT 1 FROM payment_proofs p WHERE p.ref=o.ref))"],
       ['unpaid', "o.state='pending'"], ['paid', "o.state='paid'"],
       ['basic', "o.product='summit'"], ['activities', "o.product<>'summit'"],
       ['check-in', "o.product='summit' AND o.state='paid'"], ['all', '1=1'],
@@ -182,6 +183,7 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
           (body.submittedAt !== undefined && order.submitted_at !== body.submittedAt)) {
         throw new InputError('This payment reference changed. Refresh the queue before reviewing it.');
       }
+      run('DELETE FROM payment_proofs WHERE ref=?', body.ref);
       run('DELETE FROM manual_receipts WHERE ref=?', body.ref);
       run(`INSERT INTO payment_reviews(ref,reason) VALUES(?,?) ON CONFLICT(ref) DO UPDATE SET reason=excluded.reason`,
         body.ref, body.reason);

@@ -4,6 +4,7 @@ import { execFile, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, copyFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { createServer } from 'node:net';
+import { DatabaseSync } from 'node:sqlite';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -305,6 +306,16 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     assert.equal(overview.workshopPaid, 1);
     assert.equal(overview.checkedIn, 1);
     assert.equal(overview.mailPaused, true);
+    const restoredDb = new DatabaseSync(join(restore, 'mashup.sqlite'));
+    const imported = restoredDb.prepare("SELECT o.ref FROM orders o JOIN attendees a ON a.seq=o.owner WHERE a.email='qa1@example.test'").get();
+    restoredDb.prepare("INSERT INTO payment_proofs(ref,mime,image) VALUES(?,'image/png',?)")
+      .run(imported.ref, Buffer.from(screenshot, 'base64'));
+    restoredDb.close();
+    const review = (await verified('admin/orders?view=review', 200)).data.rows.find(({ ref }) => ref === imported.ref);
+    assert.equal(review.hasProof, true);
+    assert.equal(review.utr, null);
+    await verified('admin/verify', 400, { ...imported, utr: '111122223334', amount: 800, matched: true });
+    await verified('admin/verify', 200, { ...imported, utr: '333322221111', amount: 800, matched: true, submittedAt: null });
     await frontDesk('admin/logout', 200, {});
     await frontDesk('admin/orders', 401);
   } finally {
