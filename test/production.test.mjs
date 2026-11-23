@@ -152,12 +152,13 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
       return loggedIn;
     }
 
-    await guest('admin/export', 401);
+
+    await guest('admin/export?format=xlsx', 401);
     await guest('admin/login', 403, { user: 'event-owner', password: accounts['event-owner'] }, { origin: 'https://other.example.test' });
     const owner = await signIn('event-owner', 'owner');
     const finance = await signIn('reviewer', 'payments');
     const frontDesk = await signIn('front-desk', 'checkin');
-    await finance('admin/export', 403);
+    await finance('admin/export?format=xlsx', 403);
     await finance('admin/mail', 403);
     await finance('admin/controls', 403, { name: 'summit', open: false });
     await frontDesk('admin/audit', 403);
@@ -247,6 +248,13 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     assert.ok(audit.some((entry) => entry.action === 'payment-verified' && entry.actor === 'reviewer'));
     assert.ok(audit.some((entry) => entry.action === 'check-in' && entry.actor === 'front-desk'));
     const roster = (await owner('admin/export', 200)).data;
+    const ownerLogin = await guest('admin/login', 200, { user: 'event-owner', password: accounts['event-owner'] });
+    const excel = await fetch(base + '/api/admin/export?format=xlsx',
+      { headers: { cookie: ownerLogin.headers.get('set-cookie').split(';')[0] } });
+    assert.equal(excel.status, 200);
+    assert.match(excel.headers.get('content-type'), /spreadsheetml.sheet/);
+    assert.match(excel.headers.get('content-disposition'), /roster.xlsx/);
+    assert.equal(Buffer.from(await excel.arrayBuffer()).readUInt32LE(0), 0x04034b50);
     assert.equal(new Set(roster.map(({ attendeeId }) => attendeeId)).size, 525);
     assert.equal(roster.filter(({ state }) => state === 'paid').length, 2);
     assert.ok(!JSON.stringify(roster).includes(paid.workshopToken));
@@ -409,18 +417,20 @@ test('group passes issue individual IDs and activity checkout uses the correct i
     assert.equal(mayhemRoster.find(({ attendeeId }) => attendeeId === second.id).selections[0].team.leaderId, person.id);
 
     const debateBooking = { registrationId: person.id, items: ['debate'],
-      teams: { debate: { role: 'leader', member2Id: second.id, side: 'FOR', permission: true } } };
+      teams: { debate: { partnerId: second.id, side: 'AGAINST', permission: true } } };
     await call(person.token)('activities', 400, {
       ...debateBooking, teams: { debate: { ...debateBooking.teams.debate, side: 'MAYBE' } },
     });
     await call(person.token)('activities', 200, debateBooking);
     await call(third.token)('activities', 400, { registrationId: third.id, items: ['debate'],
-      teams: { debate: { role: 'member', leaderId: person.id } } });
+      teams: { debate: { partnerId: person.id, side: 'FOR', permission: true } } });
+    await call(second.token)('activities', 400, { registrationId: second.id, items: ['debate'],
+      teams: { debate: { partnerId: person.id, side: 'AGAINST', permission: true } } });
     await call(second.token)('activities', 200, { registrationId: second.id, items: ['debate'],
-      teams: { debate: { role: 'member', leaderId: person.id, side: 'FOR' } } });
+      teams: { debate: { partnerId: person.id, side: 'FOR', permission: true } } });
     const debateRoster = (await owner('admin/orders?view=activities&activity=debate', 200)).data.rows;
-    assert.equal(debateRoster.find(({ attendeeId }) => attendeeId === person.id).selections[0].team.side, 'FOR');
-    assert.equal(debateRoster.find(({ attendeeId }) => attendeeId === second.id).selections[0].team.side, 'AGAINST');
+    assert.equal(debateRoster.find(({ attendeeId }) => attendeeId === person.id).selections[0].team.side, 'AGAINST');
+    assert.equal(debateRoster.find(({ attendeeId }) => attendeeId === second.id).selections[0].team.side, 'FOR');
 
     const { data: workshopOrder } = await call(third.token)('activities', 200, {
       registrationId: third.id, items: ['beyond'],

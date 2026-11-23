@@ -212,17 +212,25 @@ function showActivitySelection(id, state, version) {
   const teamEvents = eligible ? catalog.events.filter(({ teamSize }) => teamSize) : [];
   function teamFields({ id, name, teamSize, sides }) {
     const field = (key) => id + '-' + key;
+    if (sides) {
+      return `<fieldset class="team" data-team="${id}" disabled hidden>
+        <legend>${name} · team of ${teamSize}</legend>
+        <p class="hint">Choose your side and enter your partner’s MMSHP ID. Each partner books and pays separately.</p>
+        <div class="grid">${select(field('side'), 'Debate side', values(sides))}
+          ${input(field('partnerId'), 'Debate partner’s MMSHP ID', 'placeholder="MMSHP-002" maxlength="14" autocapitalize="characters"')}</div>
+        <label class="consent"><input type="checkbox" name="${field('permission')}" required><span>I have permission to enter my partner’s Registration ID.</span></label>
+      </fieldset>`;
+    }
     const teammate = (number, label) => input(field('member' + number + 'Id'), label + ' member MMSHP ID',
       'placeholder="MMSHP-00' + number + '" maxlength="14" autocapitalize="characters"');
     return `<fieldset class="team" data-team="${id}" disabled hidden>
       <legend>${name} · team of ${teamSize}</legend>
-      <p class="hint">The leader enters the other ${teamSize === 2 ? 'member’s ID' : 'two members’ IDs'} first. Each member books and pays separately.${sides ? ' One member speaks FOR and the other AGAINST.' : ''}</p>
+      <p class="hint">The leader enters the two teammates’ IDs first. Each person books and pays separately.</p>
       ${select(field('role'), 'Team role', [{ id: 'leader', name: 'Team leader' }, { id: 'member', name: 'Team member' }])}
       <fieldset class="block" data-team-role="leader" disabled hidden>
         <legend>Teammate Registration IDs</legend>
         <p class="hint">Your own ID is already included.</p>
-        <div class="grid">${teammate(2, 'Second')}${teamSize === 3 ? teammate(3, 'Third') : ''}</div>
-        ${sides ? select(field('side'), 'Your Debate side', values(sides)) : ''}
+        <div class="grid">${teammate(2, 'Second')}${teammate(3, 'Third')}</div>
         <label class="consent"><input type="checkbox" name="${field('permission')}" required><span>I have permission to enter my teammates’ Registration IDs.</span></label>
       </fieldset>
       <fieldset class="block" data-team-role="member" disabled hidden>
@@ -280,7 +288,8 @@ function showActivitySelection(id, state, version) {
     const teams = Object.fromEntries(teamEvents.filter(({ id }) => items.includes(id)).map(({ id }) => [id, {
       role: fields.get(id + '-role'), leaderId: fields.get(id + '-leaderId'),
       member2Id: fields.get(id + '-member2Id'), member3Id: fields.get(id + '-member3Id'),
-      side: fields.get(id + '-side'), permission: fields.has(id + '-permission'),
+      partnerId: fields.get(id + '-partnerId'), side: fields.get(id + '-side'),
+      permission: fields.has(id + '-permission'),
     }]));
     const result = await api('activities', { method: 'POST', token: accessToken, body: { registrationId: id, items, teams } });
     if (version === generation) location.hash = 'payment=' + result.token;

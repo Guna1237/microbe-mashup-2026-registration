@@ -667,6 +667,18 @@ function activityTeam(activity, input, person) {
   const bookings = all(`SELECT i.attendee, i.details FROM activity_items i JOIN orders o ON o.ref=i.ref
     WHERE i.activity=? AND o.state IN ('pending','paid')`, activity.id)
     .map(({ attendee: seq, details }) => ({ id: uid(seq), team: JSON.parse(details || 'null') }));
+  if (activity.sides && !input?.role) {
+    if (!activity.sides.includes(input?.side)) throw new InputError('Choose FOR or AGAINST for Debate.');
+    if (input.permission !== true) throw new InputError('Confirm you have permission to enter your Debate partner’s ID.');
+    const partnerId = teamAttendee(input.partnerId);
+    const partner = bookings.find(({ id, team }) =>
+      id === partnerId && team?.role === 'leader' && team.memberIds?.includes(ownId));
+    if (partner && partner.team.side === input.side) {
+      throw new InputError('Your Debate partner already selected ' + input.side + '. Choose the opposite side.');
+    }
+    input = partner ? { ...input, role: 'member', leaderId: partnerId }
+      : { ...input, role: 'leader', member2Id: partnerId };
+  }
   if (input?.role === 'member') {
     const leader = teamAttendee(input.leaderId);
     const roster = bookings.find(({ id, team }) => id === leader && team?.role === 'leader')?.team;

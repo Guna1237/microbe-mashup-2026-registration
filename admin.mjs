@@ -2,6 +2,7 @@ import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { InputError, activities, normalizeRegistrationId } from './event.mjs';
 import { retryWindowMs } from './mail-policy.mjs';
+import { rosterWorkbook } from './roster-xlsx.mjs';
 
 export const previewPassword = 'mashup-local-preview-only';
 const deriveKey = promisify(scrypt);
@@ -292,11 +293,21 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
       if (pathname === '/api/admin/export') {
         if (!owner) return forbidden();
         audit('roster-exported', 'roster', '', user);
-        res.setHeader('content-disposition', 'attachment; filename="microbe-mashup-roster.json"');
         const orders = all(selectSql + listSql + ' ORDER BY a.seq,o.product').map((row) => mapRow(row, true));
         const members = all(selectSql + checkInSql + " WHERE o.product='summit' AND a.seq<>o.owner ORDER BY a.seq")
           .map((row) => ({ ...mapRow(row, true, false), amount: 0, coveredByGroupPayment: true }));
-        return json(res, 200, [...orders, ...members]);
+        const roster = [...orders, ...members];
+        if (url.searchParams.get('format') === 'xlsx') {
+          const workbook = rosterWorkbook(roster);
+          res.writeHead(200, {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': 'attachment; filename="microbe-mashup-roster.xlsx"',
+            'content-length': workbook.length,
+          });
+          return res.end(workbook);
+        }
+        res.setHeader('content-disposition', 'attachment; filename="microbe-mashup-roster.json"');
+        return json(res, 200, roster);
       }
     }
     if (req.method === 'POST') {
