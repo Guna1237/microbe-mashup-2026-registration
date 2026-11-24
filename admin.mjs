@@ -42,7 +42,7 @@ export function installAdminSchema(db) {
   }
 }
 
-export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publicUrl, local, json, read, uid, orderLabel, verifyManual, audit, mailPaused, launchHold }) {
+export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, allowedOrigins, local, json, read, uid, orderLabel, verifyManual, audit, mailPaused, launchHold }) {
   const credentials = new Map(accounts.map((account) => [account.user, account]));
   const fakeCredential = { salt: randomBytes(24).toString('hex'), hash: randomBytes(32).toString('hex') };
   const sessions = new Map();
@@ -211,7 +211,7 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, publ
   async function route(req, res, url) {
     const { pathname } = url;
     if (!credentials.size) return json(res, 503, { error: 'Organizer sign-in has not been configured.' });
-    if (req.method === 'POST' && req.headers.origin !== publicUrl) {
+    if (req.method === 'POST' && !allowedOrigins.has(req.headers.origin)) {
       return json(res, 403, { error: 'Open the official organizer dashboard to continue.' });
     }
     if (req.method === 'POST' && pathname === '/api/admin/login') {

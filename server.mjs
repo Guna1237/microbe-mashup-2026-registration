@@ -77,6 +77,16 @@ if (checkingRazorpay) {
 const paymentConfigured = manual ? /^[\w.-]+@[\w.-]+$/.test(upiId) && Boolean(payee) : hasRazorpayKeys;
 const configuredUrl = URL.canParse(publicUrl) && new URL(publicUrl);
 const productionUrl = configuredUrl && configuredUrl.protocol === 'https:' && configuredUrl.origin === publicUrl;
+const allowedOrigins = new Set([publicUrl]);
+if (!local) {
+  for (const alias of (env.PUBLIC_URL_ALIASES || '').split(',').map((value) => value.trim()).filter(Boolean)) {
+    const url = URL.parse(alias);
+    if (url?.protocol !== 'https:' || url.origin !== alias) {
+      throw new Error('PUBLIC_URL_ALIASES must list exact HTTPS origins.');
+    }
+    allowedOrigins.add(alias);
+  }
+}
 const persistentPath = Boolean(env.DATA_DIR && isAbsolute(env.DATA_DIR));
 const ready = demo || (razorpayTest && hasRazorpayKeys) || (env.PRICES_CONFIRMED === 'true' &&
   ['BASIC_FEE', 'IPC_FEE', 'ANTIBIOTIC_FEE', 'BEYOND_FEE'].every((key) => env[key]) &&
@@ -864,7 +874,7 @@ function allowRegistration(req) {
   return true;
 }
 
-const admin = createAdmin({ db, atomic, manual, accounts: staff, demo, clientIp, publicUrl, local, json, read, uid,
+const admin = createAdmin({ db, atomic, manual, accounts: staff, demo, clientIp, allowedOrigins, local, json, read, uid,
   orderLabel, verifyManual, audit, mailPaused, launchHold });
 
 const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, async (req, res) => {
@@ -873,7 +883,7 @@ const server = createServer({ requestTimeout: 25000, headersTimeout: 10000 }, as
     const url = new URL(req.url, publicUrl);
     const { pathname } = url;
     const { method } = req;
-    if (method === 'POST' && req.headers.origin && req.headers.origin !== publicUrl) {
+    if (method === 'POST' && req.headers.origin && !allowedOrigins.has(req.headers.origin)) {
       return json(res, 403, { error: 'Open the official registration site to continue.' });
     }
     if (pathname.startsWith('/api/admin/')) return await admin(req, res, url);

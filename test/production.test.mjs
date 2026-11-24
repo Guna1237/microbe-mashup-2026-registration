@@ -14,6 +14,7 @@ import { brevoFailure } from '../mail-policy.mjs';
 import { registrationEmail } from '../mail-template.mjs';
 
 const origin = 'https://register.example.test';
+const alias = 'https://example.test';
 const screenshot = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aeykAAAAASUVORK5CYII=';
 const node = process.execPath;
 const attendee = {
@@ -111,7 +112,7 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     const env = {
       ...process.env, DEMO: '0', RAZORPAY_TEST: '0', MAIL_PAUSED: '1', TRUST_LOOPBACK_PROXY: '1',
       LAUNCH_HOLD: '0', MASHUP_ENV_FILE: '', MASHUP_PUBLIC_URL: '',
-      PRICES_CONFIRMED: 'true', STAFF_FILE: staffFile, PUBLIC_URL: origin, DATA_DIR: join(root, 'live'),
+      PRICES_CONFIRMED: 'true', STAFF_FILE: staffFile, PUBLIC_URL: origin, PUBLIC_URL_ALIASES: alias, DATA_DIR: join(root, 'live'),
       BASIC_FEE: '800', IPC_FEE: '2500', ANTIBIOTIC_FEE: '2200', BEYOND_FEE: '4000',
       BROCHURE_FILE: brochureFile,
       PAYMENT_MODE: 'manual', MANUAL_UPI_ID: 'test@example', MANUAL_PAYEE: 'QA only', MANUAL_QR_FILE: testQr,
@@ -154,6 +155,10 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     }
 
 
+    await guest('register', 400, {}, { origin: alias });
+    await guest('register', 403, {}, { origin: 'https://unrelated.example.test' });
+    const aliasSignIn = await guest('admin/login', 200, { user: 'reviewer', password: accounts.reviewer }, { origin: alias });
+    await api(base, { cookie: aliasSignIn.headers.get('set-cookie').split(';')[0] })('admin/logout', 200, {}, { origin: alias });
     await guest('admin/export?format=xlsx', 401);
     await guest('admin/login', 403, { user: 'event-owner', password: accounts['event-owner'] }, { origin: 'https://other.example.test' });
     const owner = await signIn('event-owner', 'owner');
