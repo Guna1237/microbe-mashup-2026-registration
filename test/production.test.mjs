@@ -166,6 +166,10 @@ test('production roles, 525 registrations, full UPI flow, rate limits, backup an
     const frontDesk = await signIn('front-desk', 'checkin');
     await finance('admin/export?format=xlsx', 403);
     await finance('admin/mail', 403);
+    await finance('admin/activity-summary', 403);
+    await finance('admin/orders?view=check-in', 403);
+    await finance('admin/orders?view=all', 403);
+    await finance('admin/orders?view=paid', 200);
     await finance('admin/controls', 403, { name: 'summit', open: false });
     await frontDesk('admin/audit', 403);
     await frontDesk('admin/export', 403);

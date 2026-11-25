@@ -75,17 +75,27 @@ async function refreshDashboard() {
   staffRole = overview.role;
   const owner = staffRole === 'owner';
   const checkin = staffRole === 'checkin';
+  const payments = staffRole === 'payments';
   byId('staff-identity').textContent = overview.user + ' · ' +
     { owner: 'Owner', payments: 'Payment reviewer', checkin: 'Check-in staff' }[staffRole];
   byId('export-roster').hidden = !owner;
   byId('registration-controls').hidden = !owner;
   byId('view-filter').hidden = checkin;
+  const view = filters.elements.view;
+  for (const option of view.options) option.hidden = payments && !['review', 'paid'].includes(option.value);
+  if (payments && view.selectedOptions[0]?.hidden) view.value = 'review';
+  document.querySelector('[data-tab=orders]').textContent = payments ? 'Payments' : 'Orders & check-in';
+  byId('orders-heading').textContent = payments ? 'Payment verification' : 'Orders & check-in';
+  byId('orders-heading').nextElementSibling.textContent = payments
+    ? 'Review submitted UPI payments and look up paid orders.'
+    : 'Review UPI payments and check in verified attendees.';
   filters.elements.q.placeholder = checkin ? 'Name or attendee ID' : 'Name, email, attendee ID, or UTR';
   document.querySelector('[data-tab=audit]').hidden = !owner;
-  document.querySelector('[data-tab=activity-summary]').hidden = checkin;
+  document.querySelector('[data-tab=activity-summary]').hidden = !owner;
   const mailButton = document.querySelector('[data-tab=mail]');
   mailButton.hidden = !owner;
-  const metrics = checkin ? [['Paid summit attendees', overview.summitPaid], ['Checked in', overview.checkedIn]] : [
+  const metrics = checkin ? [['Paid summit attendees', overview.summitPaid], ['Checked in', overview.checkedIn]]
+    : payments ? [['Needs review', overview.review], ['Recorded payments', money.format(overview.received / 100)]] : [
     ['Basic participants paid', overview.summitPaid + ' / ' + overview.registrations],
     ['Needs review', overview.review], ['Activity bookings paid', overview.workshopPaid + overview.eventPaid],
     ['Checked in', overview.checkedIn], ['Recorded payments', money.format(overview.received / 100)],

@@ -166,7 +166,11 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, allo
     const rows = all(selectSql + source + where +
       ' ORDER BY COALESCE(r.submitted_at,a.created) DESC,o.ref,a.seq LIMIT ? OFFSET ?', ...params, limit, (page - 1) * limit);
     const results = rows.map((row) => {
-      if (!checkin && !roster) return mapRow(row);
+      if (!checkin && !roster) {
+        const result = mapRow(row);
+        if (role === 'payments') delete result.checkedInAt;
+        return result;
+      }
       return { ref: row.ref, attendeeId: uid(row.seq), name: JSON.parse(row.details).name, product: 'summit',
         label: 'Basic Registration', state: 'paid', checkedInAt: row.checked_in_at };
     });
@@ -263,11 +267,15 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, allo
       if (pathname === '/api/admin/overview') {
         const controls = Object.fromEntries(all('SELECT name,is_open FROM event_controls').map((row) => [row.name, Boolean(row.is_open)]));
         const counts = stats();
-        const visible = role === 'checkin' ? { summitPaid: counts.summitPaid, checkedIn: counts.checkedIn } : counts;
+        const visible = role === 'checkin' ? { summitPaid: counts.summitPaid, checkedIn: counts.checkedIn }
+          : role === 'payments' ? { review: counts.review, received: counts.received } : counts;
         return json(res, 200, { ...visible, controls: owner ? { summit: true, workshops: true, ...controls } : null,
           manual, demo: local, mailPaused: owner && mailPaused, launchHold: owner && launchHold, user, role });
       }
-      if (pathname === '/api/admin/orders') return json(res, 200, queue(url, role));
+      if (pathname === '/api/admin/orders') {
+        if (role === 'payments' && !['review', 'paid'].includes(url.searchParams.get('view') || 'review')) return forbidden();
+        return json(res, 200, queue(url, role));
+      }
       if (pathname === '/api/admin/payment-proof') {
         if (!mayReview) return forbidden();
         const proof = get('SELECT mime,image FROM payment_proofs WHERE ref=?', url.searchParams.get('ref'));
@@ -277,7 +285,7 @@ export function createAdmin({ db, atomic, manual, accounts, demo, clientIp, allo
         return res.end(proof.image);
       }
       if (pathname === '/api/admin/activity-summary') {
-        if (!mayReview) return forbidden();
+        if (!owner) return forbidden();
         return json(res, 200, { entries: activityReport() });
       }
       if (pathname === '/api/admin/audit') {
